@@ -69,6 +69,14 @@
             "group": "none",
             "problemMatcher": [],
             "detail": "Open the bot's web interface in browser"
+        },
+        {
+            "label": "Build Launcher (Windows)",
+            "type": "shell",
+            "command": "go build -ldflags \"-H=windowsgui\" -o e_n_u_f.exe ./cmd/launcher",
+            "group": "build",
+            "problemMatcher": ["$go"],
+            "detail": "Build the Windows GUI launcher"
         }
     ]
 }

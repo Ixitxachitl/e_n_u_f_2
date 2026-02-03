@@ -98,6 +98,17 @@ func (s *Server) Start() error {
 		ErrorLog: log.New(&tlsErrorFilter{}, "", 0),
 	}
 
+	// Also start HTTP server on port+1 for embedded browser (no cert warnings)
+	httpPort := s.cfg.GetWebPort() + 1
+	httpServer := &http.Server{
+		Addr:    fmt.Sprintf(":%d", httpPort),
+		Handler: mux,
+	}
+	go func() {
+		log.Printf("Starting HTTP server on port %d (for embedded browser)", httpPort)
+		httpServer.ListenAndServe()
+	}()
+
 	// Try HTTPS first, fall back to HTTP
 	certFile, keyFile := s.getCertPaths()
 	if _, err := os.Stat(certFile); os.IsNotExist(err) {
