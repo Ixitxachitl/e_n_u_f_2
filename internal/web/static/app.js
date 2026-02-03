@@ -54,6 +54,7 @@ function startAutoRefresh() {
     refreshInterval = setInterval(() => {
         loadStatus();
         loadChannels();
+        loadLiveChannels();
         loadDatabaseStats();
     }, 5000);
 }
@@ -200,6 +201,7 @@ async function loadInitialData() {
         loadStatus(),
         loadConfig(),
         loadChannels(),
+        loadLiveChannels(),
         loadBrains(),
         loadBlacklist(),
         loadIgnoredUsers(),
@@ -280,6 +282,11 @@ async function loadChannels() {
     renderChannels(channels);
 }
 
+async function loadLiveChannels() {
+    const liveChannels = await api.get('/api/live');
+    renderLiveChannels(liveChannels);
+}
+
 async function loadBrains() {
     const brains = await api.get('/api/brains');
     renderBrains(brains);
@@ -306,23 +313,9 @@ async function loadDatabaseStats() {
 // Rendering
 function renderChannels(channels) {
     if (!channels || channels.length === 0) {
-        elements.channelList.innerHTML = '<div class="empty-state">No channels connected</div>';
         elements.channelsList.innerHTML = '<div class="empty-state">No channels configured</div>';
         return;
     }
-
-    // Dashboard view - no actions, just status
-    const dashboardHtml = channels.map(ch => `
-        <div class="list-item">
-            <div class="info">
-                <div class="name">
-                    <span class="status-dot ${ch.connected ? 'connected' : 'disconnected'}"></span>
-                    ${ch.channel}
-                </div>
-                <div class="stats">${ch.messages.toLocaleString()} messages</div>
-            </div>
-        </div>
-    `).join('');
 
     // Channels tab - with actions
     const channelsHtml = channels.map(ch => `
@@ -330,7 +323,7 @@ function renderChannels(channels) {
             <div class="info">
                 <div class="name">
                     <span class="status-dot ${ch.connected ? 'connected' : 'disconnected'}"></span>
-                    ${ch.channel}
+                    <a href="https://twitch.tv/${ch.channel}" target="_blank" class="channel-link">${ch.channel}</a>
                 </div>
                 <div class="stats">${ch.messages.toLocaleString()} messages</div>
             </div>
@@ -341,8 +334,43 @@ function renderChannels(channels) {
         </div>
     `).join('');
 
-    elements.channelList.innerHTML = dashboardHtml;
     elements.channelsList.innerHTML = channelsHtml;
+}
+
+function renderLiveChannels(liveChannels) {
+    if (!liveChannels || liveChannels.length === 0) {
+        elements.channelList.innerHTML = '<div class="empty-state">No channels are live</div>';
+        return;
+    }
+
+    const html = liveChannels.map(ch => {
+        const countdown = ch.messages_until || 0;
+        const interval = ch.message_interval || 1;
+        const percentage = Math.round(((interval - countdown) / interval) * 100);
+        
+        return `
+        <div class="list-item live-channel-item" onclick="window.open('https://twitch.tv/${ch.channel}', '_blank')">
+            <div class="countdown-display">
+                <div class="countdown-number">${countdown}</div>
+                <div class="countdown-label">msgs</div>
+            </div>
+            <div class="info">
+                <div class="name">
+                    <span class="status-dot connected"></span>
+                    ${ch.channel}
+                </div>
+                <div class="stats">
+                    ${ch.game || 'Unknown Game'} • ${ch.viewers.toLocaleString()} viewers
+                </div>
+                <div class="stream-title">${escapeHtml(ch.title || '')}</div>
+                <div class="countdown-bar">
+                    <div class="countdown-progress" style="width: ${percentage}%"></div>
+                </div>
+            </div>
+        </div>
+    `}).join('');
+
+    elements.channelList.innerHTML = html;
 }
 
 function renderBrains(brains) {

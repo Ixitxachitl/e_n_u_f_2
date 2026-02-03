@@ -154,6 +154,13 @@ func (b *Brain) ProcessMessage(message, username, botUsername string) string {
 	return ""
 }
 
+// GetMessageCounter returns the current message counter
+func (b *Brain) GetMessageCounter() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.msgCounter
+}
+
 // learn adds a message to the brain
 func (b *Brain) learn(message string) {
 	words := strings.Fields(message)

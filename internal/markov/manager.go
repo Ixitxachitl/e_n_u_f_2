@@ -69,6 +69,27 @@ func (m *Manager) RemoveBrain(channel string) {
 	}
 }
 
+// GetChannelCountdown returns the messages until next response for a channel
+func (m *Manager) GetChannelCountdown(channel string) (messagesUntilResponse int, interval int) {
+	channel = strings.ToLower(channel)
+	interval = m.cfg.GetMessageInterval()
+
+	m.mu.RLock()
+	brain, exists := m.brains[channel]
+	m.mu.RUnlock()
+
+	if !exists || brain == nil {
+		return interval, interval
+	}
+
+	counter := brain.GetMessageCounter()
+	messagesUntilResponse = interval - counter
+	if messagesUntilResponse < 0 {
+		messagesUntilResponse = 0
+	}
+	return messagesUntilResponse, interval
+}
+
 // ListBrains returns stats for all channels with brain data
 func (m *Manager) ListBrains() []BrainStats {
 	brainsDir := filepath.Join(database.GetDataDir(), "brains")

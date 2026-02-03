@@ -74,6 +74,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/channels", s.handleChannels)
 	mux.HandleFunc("/api/channels/", s.handleChannelAction)
+	mux.HandleFunc("/api/live", s.handleLiveChannels)
 	mux.HandleFunc("/api/brains", s.handleBrains)
 	mux.HandleFunc("/api/brains/", s.handleBrainAction)
 	mux.HandleFunc("/api/blacklist", s.handleBlacklist)
@@ -467,6 +468,135 @@ func (s *Server) handleChannelAction(w http.ResponseWriter, r *http.Request) {
 	default:
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleLiveChannels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get all connected channels
+	channels := s.manager.GetChannelStatus()
+	if len(channels) == 0 {
+		jsonResponse(w, []map[string]interface{}{})
+		return
+	}
+
+	// Get Client ID and OAuth token for Twitch API
+	clientID := s.cfg.GetClientID()
+	oauthToken := s.cfg.GetOAuthToken()
+	if clientID == "" || oauthToken == "" {
+		jsonResponse(w, []map[string]interface{}{})
+		return
+	}
+
+	// Build list of channel names to check
+	channelNames := make([]string, len(channels))
+	for i, ch := range channels {
+		channelNames[i] = ch.Channel
+	}
+
+	// Query Twitch API for live streams
+	liveStreams := s.getLiveStreams(channelNames, clientID, oauthToken)
+
+	// Build response with only live channels
+	result := []map[string]interface{}{}
+	brainMgr := s.manager.GetBrainManager()
+	for _, ch := range channels {
+		if stream, isLive := liveStreams[strings.ToLower(ch.Channel)]; isLive {
+			countdown, interval := brainMgr.GetChannelCountdown(ch.Channel)
+			result = append(result, map[string]interface{}{
+				"channel":          ch.Channel,
+				"title":            stream.Title,
+				"game":             stream.GameName,
+				"viewers":          stream.ViewerCount,
+				"started_at":       stream.StartedAt,
+				"messages_until":   countdown,
+				"message_interval": interval,
+			})
+		}
+	}
+
+	jsonResponse(w, result)
+}
+
+type twitchStream struct {
+	Title       string `json:"title"`
+	GameName    string `json:"game_name"`
+	ViewerCount int    `json:"viewer_count"`
+	StartedAt   string `json:"started_at"`
+}
+
+func (s *Server) getLiveStreams(channels []string, clientID, oauthToken string) map[string]twitchStream {
+	result := make(map[string]twitchStream)
+	if len(channels) == 0 {
+		return result
+	}
+
+	// Build query params
+	params := "?"
+	for i, ch := range channels {
+		if i > 0 {
+			params += "&"
+		}
+		params += "user_login=" + strings.ToLower(ch)
+	}
+
+	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams"+params, nil)
+	if err != nil {
+		log.Printf("Error creating Twitch API request: %v", err)
+		return result
+	}
+
+	// Remove "oauth:" prefix if present
+	token := oauthToken
+	if strings.HasPrefix(token, "oauth:") {
+		token = strings.TrimPrefix(token, "oauth:")
+	}
+
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error calling Twitch API: %v", err)
+		return result
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Twitch API error %d: %s", resp.StatusCode, string(body))
+		return result
+	}
+
+	var apiResp struct {
+		Data []struct {
+			UserLogin   string `json:"user_login"`
+			Title       string `json:"title"`
+			GameName    string `json:"game_name"`
+			ViewerCount int    `json:"viewer_count"`
+			StartedAt   string `json:"started_at"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		log.Printf("Error decoding Twitch API response: %v", err)
+		return result
+	}
+
+	for _, stream := range apiResp.Data {
+		result[strings.ToLower(stream.UserLogin)] = twitchStream{
+			Title:       stream.Title,
+			GameName:    stream.GameName,
+			ViewerCount: stream.ViewerCount,
+			StartedAt:   stream.StartedAt,
+		}
+	}
+
+	return result
 }
 
 func (s *Server) handleBrains(w http.ResponseWriter, r *http.Request) {
