@@ -290,10 +290,12 @@ func (b *Brain) Clean() (rowsRemoved int) {
 	defer b.mu.Unlock()
 
 	for _, word := range blacklist {
+		// Use LIKE for partial matching and LOWER for case-insensitive
+		pattern := "%" + strings.ToLower(word) + "%"
 		result, _ := b.db.Exec(`
 			DELETE FROM transitions 
-			WHERE word1 = ? OR word2 = ? OR next_word = ?
-		`, word, word, word)
+			WHERE LOWER(word1) LIKE ? OR LOWER(word2) LIKE ? OR LOWER(next_word) LIKE ?
+		`, pattern, pattern, pattern)
 
 		if result != nil {
 			affected, _ := result.RowsAffected()
