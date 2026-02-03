@@ -488,8 +488,21 @@ func (m *Manager) updateLiveConnections() {
 		return
 	}
 
-	// Query Twitch API for live status
-	liveChannels := m.getLiveChannelSet(channels, clientID, oauthToken)
+	// Build a map of channel name -> user ID (look up any missing IDs)
+	channelIDs := m.ensureChannelIDs(channels, clientID, oauthToken)
+
+	// Query Twitch API for live status using user IDs
+	liveChannels, usernameUpdates := m.getLiveChannelSetByID(channelIDs, clientID, oauthToken)
+
+	// Handle any username changes detected during polling
+	for oldName, newName := range usernameUpdates {
+		userID := channelIDs[oldName]
+		log.Printf("Username change detected during polling: %s -> %s (ID: %s)", oldName, newName, userID)
+		m.handleUsernameChange(oldName, newName, userID)
+		// Update our local map for the rest of this cycle
+		delete(liveChannels, oldName)
+		liveChannels[newName] = true
+	}
 
 	// Get currently connected channels (excluding bot's own channel)
 	m.mu.RLock()
@@ -525,36 +538,63 @@ func (m *Manager) updateLiveConnections() {
 	}
 }
 
-// getLiveChannelSet returns a set of channel names that are currently live
-func (m *Manager) getLiveChannelSet(channels []string, clientID, oauthToken string) map[string]bool {
-	result := make(map[string]bool)
-	if len(channels) == 0 {
+// ensureChannelIDs makes sure all channels have user IDs stored, returns map of channel->userID
+func (m *Manager) ensureChannelIDs(channels []string, clientID, oauthToken string) map[string]string {
+	result := make(map[string]string)
+	var needsLookup []string
+
+	// Check which channels already have IDs stored
+	for _, ch := range channels {
+		ch = strings.ToLower(ch)
+		if userID := m.cfg.GetUserIDByUsername(ch); userID != "" {
+			result[ch] = userID
+		} else {
+			needsLookup = append(needsLookup, ch)
+		}
+	}
+
+	// Look up missing IDs
+	if len(needsLookup) > 0 {
+		newIDs := m.lookupUserIDs(needsLookup, clientID, oauthToken)
+		for ch, userID := range newIDs {
+			result[ch] = userID
+			m.cfg.SetUserIDMapping(userID, ch)
+			log.Printf("Stored user ID for %s: %s", ch, userID)
+		}
+	}
+
+	return result
+}
+
+// lookupUserIDs looks up Twitch user IDs for a list of usernames
+func (m *Manager) lookupUserIDs(usernames []string, clientID, oauthToken string) map[string]string {
+	result := make(map[string]string)
+	if len(usernames) == 0 {
 		return result
 	}
 
 	// Build query params (max 100 per request)
 	params := "?"
-	for i, ch := range channels {
+	for i, name := range usernames {
 		if i > 0 {
 			params += "&"
 		}
-		params += "user_login=" + strings.ToLower(ch)
+		params += "login=" + strings.ToLower(name)
 	}
 
-	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams"+params, nil)
+	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users"+params, nil)
 	if err != nil {
 		return result
 	}
 
 	token := strings.TrimPrefix(oauthToken, "oauth:")
-
 	req.Header.Set("Client-ID", clientID)
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("Error checking live channels: %v", err)
+		log.Printf("Error looking up user IDs: %v", err)
 		return result
 	}
 	defer resp.Body.Close()
@@ -565,7 +605,8 @@ func (m *Manager) getLiveChannelSet(channels []string, clientID, oauthToken stri
 
 	var apiResp struct {
 		Data []struct {
-			UserLogin string `json:"user_login"`
+			ID    string `json:"id"`
+			Login string `json:"login"`
 		} `json:"data"`
 	}
 
@@ -573,11 +614,93 @@ func (m *Manager) getLiveChannelSet(channels []string, clientID, oauthToken stri
 		return result
 	}
 
-	for _, stream := range apiResp.Data {
-		result[strings.ToLower(stream.UserLogin)] = true
+	for _, user := range apiResp.Data {
+		result[strings.ToLower(user.Login)] = user.ID
 	}
 
 	return result
+}
+
+// getLiveChannelSetByID returns live channels and any username changes detected
+func (m *Manager) getLiveChannelSetByID(channelIDs map[string]string, clientID, oauthToken string) (live map[string]bool, usernameChanges map[string]string) {
+	live = make(map[string]bool)
+	usernameChanges = make(map[string]string)
+
+	if len(channelIDs) == 0 {
+		return
+	}
+
+	// Build reverse map: userID -> stored username
+	idToUsername := make(map[string]string)
+	var userIDs []string
+	for username, userID := range channelIDs {
+		if userID != "" {
+			idToUsername[userID] = username
+			userIDs = append(userIDs, userID)
+		}
+	}
+
+	if len(userIDs) == 0 {
+		return
+	}
+
+	// Build query params using user IDs (max 100 per request)
+	params := "?"
+	for i, id := range userIDs {
+		if i > 0 {
+			params += "&"
+		}
+		params += "user_id=" + id
+	}
+
+	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams"+params, nil)
+	if err != nil {
+		return
+	}
+
+	token := strings.TrimPrefix(oauthToken, "oauth:")
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error checking live channels: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	var apiResp struct {
+		Data []struct {
+			UserID    string `json:"user_id"`
+			UserLogin string `json:"user_login"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return
+	}
+
+	for _, stream := range apiResp.Data {
+		currentUsername := strings.ToLower(stream.UserLogin)
+		storedUsername := idToUsername[stream.UserID]
+
+		// Check for username change
+		if storedUsername != "" && storedUsername != currentUsername {
+			usernameChanges[storedUsername] = currentUsername
+			live[currentUsername] = true
+		} else if storedUsername != "" {
+			live[storedUsername] = true
+		} else {
+			live[currentUsername] = true
+		}
+	}
+
+	return
 }
 
 // leaveChannelQuietly disconnects from a channel without removing it from config

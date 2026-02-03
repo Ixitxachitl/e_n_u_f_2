@@ -324,6 +324,7 @@ function renderChannels(channels) {
             ? `<img src="${ch.profile_image_url}" class="channel-avatar" alt="${ch.channel}">` 
             : `<span class="channel-avatar-placeholder"></span>`;
         const interval = ch.message_interval || 35;
+        const userIdText = ch.user_id ? `ID: ${ch.user_id}` : 'ID: pending';
         return `
         <div class="list-item">
             <div class="info">
@@ -331,7 +332,7 @@ function renderChannels(channels) {
                     ${profileImg}
                     <a href="https://twitch.tv/${ch.channel}" target="_blank" class="channel-link">${ch.channel}</a>
                 </div>
-                <div class="stats">${ch.messages.toLocaleString()} messages${!ch.connected ? ' • offline' : ''}</div>
+                <div class="stats">${ch.messages.toLocaleString()} messages${!ch.connected ? ' • offline' : ''} • ${userIdText}</div>
             </div>
             <div class="channel-interval">
                 <span class="interval-value">${interval}</span>

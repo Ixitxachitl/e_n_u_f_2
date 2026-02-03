@@ -447,7 +447,7 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 			profileImages = s.getUserProfiles(channelNames, clientID, oauthToken)
 		}
 
-		// Build response with profile images
+		// Build response with profile images and user IDs
 		result := make([]map[string]interface{}, len(channels))
 		for i, ch := range channels {
 			result[i] = map[string]interface{}{
@@ -456,6 +456,7 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 				"messages":          ch.Messages,
 				"profile_image_url": profileImages[strings.ToLower(ch.Channel)],
 				"message_interval":  s.cfg.GetChannelMessageInterval(ch.Channel),
+				"user_id":           s.cfg.GetUserIDByUsername(ch.Channel),
 			}
 		}
 		jsonResponse(w, result)

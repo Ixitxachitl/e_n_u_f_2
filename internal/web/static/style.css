@@ -305,11 +305,8 @@ input[type="password"]::placeholder {
 .list-item .stream-title {
     font-size: 0.8rem;
     color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 400px;
     margin-top: 2px;
+    word-wrap: break-word;
 }
 
 /* Live channel countdown styles */
