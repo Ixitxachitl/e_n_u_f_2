@@ -142,8 +142,10 @@ func (m *Manager) JoinChannel(channel string) error {
 	return nil
 }
 
-// LeaveChannel disconnects from a channel
+// LeaveChannel disconnects from a channel and removes it from config
 func (m *Manager) LeaveChannel(channel string) {
+	channel = strings.ToLower(channel)
+
 	m.mu.Lock()
 	client, exists := m.clients[channel]
 	if exists {
@@ -154,9 +156,11 @@ func (m *Manager) LeaveChannel(channel string) {
 
 	if exists {
 		client.Disconnect()
-		m.cfg.RemoveChannel(channel)
-		log.Printf("Left channel: %s", channel)
 	}
+
+	// Always remove from config, even if not currently connected
+	m.cfg.RemoveChannel(channel)
+	log.Printf("Left channel: %s", channel)
 }
 
 // GetChannelStatus returns status for all configured channels (excluding bot's own channel)

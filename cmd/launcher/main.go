@@ -18,10 +18,9 @@ import (
 var iconData []byte
 
 var (
-	botProcess   *exec.Cmd
-	webview      webview2.WebView
-	exeDir       string
-	windowClosed bool
+	botProcess *exec.Cmd
+	exeDir     string
+	webviewRef webview2.WebView
 )
 
 func main() {
@@ -52,8 +51,11 @@ func main() {
 	// Wait for the web server to be ready
 	time.Sleep(3 * time.Second)
 
-	// Start systray (this runs the main loop)
-	systray.Run(onReady, onExit)
+	// Start systray in background goroutine
+	go systray.Run(onTrayReady, onTrayExit)
+
+	// Run webview on main thread - this blocks until window is destroyed
+	runWebView()
 }
 
 func runWebView() {
@@ -71,67 +73,66 @@ func runWebView() {
 	if w == nil {
 		showError("Failed to create webview. Make sure Microsoft Edge WebView2 Runtime is installed.")
 		cleanup()
+		os.Exit(1)
 		return
 	}
-	webview = w
+	webviewRef = w
 
-	// Set window icon from embedded data
+	// Set window icon from embedded data and start minimize watcher
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		SetWindowIconFromMemory(iconData)
+
+		// Watch for minimize - hide window to tray instead
+		for {
+			time.Sleep(100 * time.Millisecond)
+			if IsMainWindowMinimized() {
+				HideMainWindow()
+			}
+		}
 	}()
 
 	w.SetSize(1024, 768, webview2.HintNone)
-	w.Navigate("http://localhost:24602") // Use HTTP port (no cert warning)
+	w.Navigate("http://localhost:24602")
 	w.Run()
 
-	// Window was closed - hide to tray instead of quitting
-	webview = nil
-	windowClosed = true
+	// Window closed/destroyed - cleanup and exit completely
+	cleanup()
+	os.Exit(0)
 }
 
-func onReady() {
-	systray.SetIcon(getIcon())
+func onTrayReady() {
+	systray.SetIcon(iconData)
 	systray.SetTitle("e_n_u_f 2.0")
 	systray.SetTooltip("e_n_u_f 2.0 - Twitch Markov Bot")
 
-	mShow := systray.AddMenuItem("Show Window", "Open the main window")
+	mShow := systray.AddMenuItem("Show Window", "Bring window to front")
+	mBrowser := systray.AddMenuItem("Open in Browser", "Open the web UI in your default browser")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Stop the bot and exit")
-
-	// Open the window initially
-	go runWebView()
 
 	go func() {
 		for {
 			select {
 			case <-mShow.ClickedCh:
-				// If window was closed, create a new one
-				if windowClosed || webview == nil {
-					windowClosed = false
-					go runWebView()
-				} else {
-					// Try to show existing window
-					ShowMainWindow()
-				}
+				ShowMainWindow()
+			case <-mBrowser.ClickedCh:
+				exec.Command("cmd", "/c", "start", "https://localhost:24601").Start()
 			case <-mQuit.ClickedCh:
-				cleanup()
-				systray.Quit()
+				if webviewRef != nil {
+					webviewRef.Terminate()
+				}
 				return
 			}
 		}
 	}()
 }
 
-func onExit() {
+func onTrayExit() {
 	cleanup()
 }
 
 func cleanup() {
-	if webview != nil {
-		webview.Destroy()
-		webview = nil
-	}
 	if botProcess != nil && botProcess.Process != nil {
 		botProcess.Process.Kill()
 	}
@@ -144,8 +145,4 @@ func showError(msg string) {
 		f.WriteString(fmt.Sprintf("%s: %s\n", time.Now().Format(time.RFC3339), msg))
 		f.Close()
 	}
-}
-
-func getIcon() []byte {
-	return iconData
 }

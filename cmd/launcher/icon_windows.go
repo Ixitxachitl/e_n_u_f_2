@@ -9,23 +9,25 @@ import (
 )
 
 var (
-	user32                    = syscall.NewLazyDLL("user32.dll")
-	sendMessageW              = user32.NewProc("SendMessageW")
-	findWindowW               = user32.NewProc("FindWindowW")
-	showWindow                = user32.NewProc("ShowWindow")
-	setForegroundWnd          = user32.NewProc("SetForegroundWindow")
-	isWindowVisible           = user32.NewProc("IsWindowVisible")
-	createIconFromResourceEx  = user32.NewProc("CreateIconFromResourceEx")
+	user32                      = syscall.NewLazyDLL("user32.dll")
+	sendMessageW                = user32.NewProc("SendMessageW")
+	findWindowW                 = user32.NewProc("FindWindowW")
+	showWindow                  = user32.NewProc("ShowWindow")
+	setForegroundWnd            = user32.NewProc("SetForegroundWindow")
+	isWindowVisible             = user32.NewProc("IsWindowVisible")
+	isIconic                    = user32.NewProc("IsIconic")
+	createIconFromResourceEx    = user32.NewProc("CreateIconFromResourceEx")
 	lookupIconIdFromDirectoryEx = user32.NewProc("LookupIconIdFromDirectoryEx")
 )
 
 const (
-	WM_SETICON = 0x0080
-	ICON_SMALL = 0
-	ICON_BIG   = 1
-	SW_HIDE    = 0
-	SW_SHOW    = 5
-	SW_RESTORE = 9
+	WM_SETICON      = 0x0080
+	ICON_SMALL      = 0
+	ICON_BIG        = 1
+	SW_HIDE         = 0
+	SW_SHOW         = 5
+	SW_RESTORE      = 9
+	SW_MINIMIZE     = 6
 	LR_DEFAULTCOLOR = 0x00000000
 )
 
@@ -87,7 +89,7 @@ func SetWindowIconFromMemory(icoData []byte) {
 			hIcon, _, _ := createIconFromResourceEx.Call(
 				uintptr(unsafe.Pointer(&iconData[0])),
 				uintptr(size),
-				1, // TRUE = icon
+				1,          // TRUE = icon
 				0x00030000, // version
 				16, 16,
 				LR_DEFAULTCOLOR,
@@ -103,7 +105,7 @@ func SetWindowIconFromMemory(icoData []byte) {
 			hIcon, _, _ := createIconFromResourceEx.Call(
 				uintptr(unsafe.Pointer(&iconData[0])),
 				uintptr(size),
-				1, // TRUE = icon
+				1,          // TRUE = icon
 				0x00030000, // version
 				32, 32,
 				LR_DEFAULTCOLOR,
@@ -162,5 +164,15 @@ func IsMainWindowVisible() bool {
 		return false
 	}
 	ret, _, _ := isWindowVisible.Call(hwnd)
+	return ret != 0
+}
+
+// IsMainWindowMinimized checks if the window is minimized
+func IsMainWindowMinimized() bool {
+	hwnd := FindMainWindow()
+	if hwnd == 0 {
+		return false
+	}
+	ret, _, _ := isIconic.Call(hwnd)
 	return ret != 0
 }
