@@ -455,6 +455,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"message_interval":  s.cfg.GetMessageInterval(),
 			"web_port":          s.cfg.GetWebPort(),
 			"bot_profile_image": botProfileImage,
+			"allow_self_join":   s.cfg.GetAllowSelfJoin(),
 		}
 		jsonResponse(w, config)
 
@@ -462,6 +463,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ClientID        *string `json:"client_id"`
 			MessageInterval *int    `json:"message_interval"`
+			AllowSelfJoin   *bool   `json:"allow_self_join"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpError(w, "Invalid request", http.StatusBadRequest)
@@ -473,6 +475,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.MessageInterval != nil {
 			s.cfg.SetMessageInterval(*req.MessageInterval)
+		}
+		if req.AllowSelfJoin != nil {
+			s.cfg.SetAllowSelfJoin(*req.AllowSelfJoin)
 		}
 
 		jsonResponse(w, map[string]string{"status": "updated"})

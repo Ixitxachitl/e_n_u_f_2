@@ -86,6 +86,20 @@ func (c *Config) SetMessageInterval(interval int) error {
 	return c.setValue("message_interval", strconv.Itoa(interval))
 }
 
+// GetAllowSelfJoin returns whether users can use !join command
+func (c *Config) GetAllowSelfJoin() bool {
+	val := c.getValue("allow_self_join")
+	if val == "" {
+		return true // Default to enabled
+	}
+	return val == "true"
+}
+
+// SetAllowSelfJoin sets whether users can use !join command
+func (c *Config) SetAllowSelfJoin(allow bool) error {
+	return c.setValue("allow_self_join", strconv.FormatBool(allow))
+}
+
 // IsConfigured checks if the bot is properly configured
 func (c *Config) IsConfigured() bool {
 	token := c.GetOAuthToken()

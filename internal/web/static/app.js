@@ -88,6 +88,7 @@ function cacheElements() {
     elements.activityLog = document.getElementById('activity-log');
     elements.intervalSlider = document.getElementById('interval-slider');
     elements.intervalValue = document.getElementById('interval-value');
+    elements.allowSelfJoin = document.getElementById('allow-self-join');
     elements.newChannel = document.getElementById('new-channel');
     elements.newBlacklistWord = document.getElementById('new-blacklist-word');
     elements.newIgnoredUser = document.getElementById('new-ignored-user');
@@ -154,6 +155,11 @@ function setupEventListeners() {
         elements.intervalValue.textContent = elements.intervalSlider.value;
     });
     document.getElementById('save-interval-btn').addEventListener('click', saveInterval);
+
+    // Self-join toggle
+    elements.allowSelfJoin.addEventListener('change', async () => {
+        await api.put('/api/config', { allow_self_join: elements.allowSelfJoin.checked });
+    });
 
     // Blacklist
     document.getElementById('add-blacklist-btn').addEventListener('click', addBlacklistWord);
@@ -348,6 +354,9 @@ async function loadConfig() {
     const config = await api.get('/api/config');
     elements.intervalSlider.value = config.message_interval;
     elements.intervalValue.textContent = config.message_interval;
+    
+    // Set self-join toggle
+    elements.allowSelfJoin.checked = config.allow_self_join !== false;
     
     // Set redirect URL based on current location
     const redirectUrl = `${window.location.origin}/auth/callback`;

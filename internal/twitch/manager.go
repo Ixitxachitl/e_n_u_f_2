@@ -286,6 +286,14 @@ func (m *Manager) onCommand(channel, username, command string) {
 
 	switch command {
 	case "!join":
+		// Check if self-join is enabled
+		if !m.cfg.GetAllowSelfJoin() {
+			if botClient != nil {
+				botClient.SendMessage(fmt.Sprintf("@%s Self-join is currently disabled.", username))
+			}
+			return
+		}
+
 		// Join the user's channel
 		userChannel := strings.ToLower(username)
 
