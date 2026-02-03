@@ -1,0 +1,472 @@
+package markov
+
+import (
+	"database/sql"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+
+	_ "github.com/mattn/go-sqlite3"
+
+	"twitchbot/internal/config"
+	"twitchbot/internal/database"
+)
+
+// Brain represents a Markov chain brain for a single channel with its own database
+type Brain struct {
+	Channel    string
+	cfg        *config.Config
+	db         *sql.DB
+	mu         sync.RWMutex
+	msgCounter int
+	rng        *rand.Rand
+}
+
+// BrainStats holds statistics about a brain
+type BrainStats struct {
+	Channel      string `json:"channel"`
+	UniquePairs  int    `json:"unique_pairs"`
+	TotalEntries int    `json:"total_entries"`
+	MessageCount int64  `json:"message_count"`
+	DbSize       int64  `json:"db_size"`
+}
+
+// NewBrain creates a new brain for a channel with its own database
+func NewBrain(channel string, cfg *config.Config) (*Brain, error) {
+	channel = strings.ToLower(channel)
+
+	brain := &Brain{
+		Channel: channel,
+		cfg:     cfg,
+		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+
+	if err := brain.initDB(); err != nil {
+		return nil, err
+	}
+
+	return brain, nil
+}
+
+// initDB initializes the brain's database
+func (b *Brain) initDB() error {
+	brainsDir := filepath.Join(database.GetDataDir(), "brains")
+	if err := os.MkdirAll(brainsDir, 0755); err != nil {
+		return err
+	}
+
+	dbPath := filepath.Join(brainsDir, b.Channel+".db")
+	var err error
+	b.db, err = sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		return err
+	}
+
+	// Create transitions table
+	_, err = b.db.Exec(`
+		CREATE TABLE IF NOT EXISTS transitions (
+			word1 TEXT NOT NULL,
+			word2 TEXT NOT NULL,
+			next_word TEXT NOT NULL,
+			count INTEGER DEFAULT 1,
+			PRIMARY KEY (word1, word2, next_word)
+		);
+		CREATE INDEX IF NOT EXISTS idx_word1_word2 ON transitions(word1, word2);
+	`)
+
+	return err
+}
+
+// Close closes the brain's database connection
+func (b *Brain) Close() error {
+	if b.db != nil {
+		return b.db.Close()
+	}
+	return nil
+}
+
+// ProcessMessage learns from a message and optionally generates a response
+func (b *Brain) ProcessMessage(message, username, botUsername string) string {
+	// Skip commands
+	if strings.HasPrefix(message, "!") {
+		return ""
+	}
+
+	// Skip bot's own messages
+	if strings.EqualFold(username, botUsername) {
+		return ""
+	}
+
+	// Skip learning/generating in the bot's own channel
+	if strings.EqualFold(b.Channel, botUsername) {
+		return ""
+	}
+
+	// Skip blacklisted users
+	if b.cfg.IsBlacklistedUser(username) {
+		return ""
+	}
+
+	// Skip messages with links
+	if containsLink(message) {
+		return ""
+	}
+
+	// Skip non-English messages
+	if !isMostlyEnglish(message) {
+		return ""
+	}
+
+	// Skip messages with blacklisted words
+	if b.containsBlacklistedWord(message) {
+		return ""
+	}
+
+	// Learn from the message
+	b.learn(message)
+
+	// Increment message count
+	b.cfg.IncrementChannelMessages(b.Channel)
+
+	// Check if we should respond
+	b.mu.Lock()
+	b.msgCounter++
+	shouldRespond := b.msgCounter >= b.cfg.GetMessageInterval()
+	if shouldRespond {
+		b.msgCounter = 0
+	}
+	b.mu.Unlock()
+
+	if shouldRespond {
+		// Try up to 5 times to generate a clean response
+		for i := 0; i < 5; i++ {
+			response := b.Generate(20)
+			if response != "" && !b.containsBlacklistedWord(response) {
+				return response
+			}
+		}
+	}
+
+	return ""
+}
+
+// learn adds a message to the brain
+func (b *Brain) learn(message string) {
+	words := strings.Fields(message)
+	if len(words) < 3 {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i := 0; i < len(words)-2; i++ {
+		word1 := words[i]
+		word2 := words[i+1]
+		nextWord := words[i+2]
+
+		// Insert or update count
+		b.db.Exec(`
+			INSERT INTO transitions (word1, word2, next_word, count)
+			VALUES (?, ?, ?, 1)
+			ON CONFLICT(word1, word2, next_word) DO UPDATE SET count = count + 1
+		`, word1, word2, nextWord)
+	}
+}
+
+// Generate creates a sentence using the Markov chain
+func (b *Brain) Generate(maxWords int) string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	// Get a random starting pair
+	var word1, word2 string
+	err := b.db.QueryRow(`
+		SELECT word1, word2 FROM transitions 
+		ORDER BY RANDOM() LIMIT 1
+	`).Scan(&word1, &word2)
+
+	if err != nil {
+		return ""
+	}
+
+	result := []string{word1, word2}
+
+	for i := 0; i < maxWords; i++ {
+		// Get possible next words weighted by count
+		rows, err := b.db.Query(`
+			SELECT next_word, count FROM transitions
+			WHERE word1 = ? AND word2 = ?
+		`, word1, word2)
+
+		if err != nil {
+			break
+		}
+
+		var candidates []string
+		var weights []int
+		totalWeight := 0
+
+		for rows.Next() {
+			var nextWord string
+			var count int
+			if rows.Scan(&nextWord, &count) == nil {
+				candidates = append(candidates, nextWord)
+				weights = append(weights, count)
+				totalWeight += count
+			}
+		}
+		rows.Close()
+
+		if len(candidates) == 0 {
+			break
+		}
+
+		// Weighted random selection
+		r := b.rng.Intn(totalWeight)
+		cumulative := 0
+		var nextWord string
+		for i, w := range weights {
+			cumulative += w
+			if r < cumulative {
+				nextWord = candidates[i]
+				break
+			}
+		}
+
+		result = append(result, nextWord)
+		word1 = word2
+		word2 = nextWord
+	}
+
+	return strings.Join(result, " ")
+}
+
+// GetStats returns statistics about the brain
+func (b *Brain) GetStats() BrainStats {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	stats := BrainStats{
+		Channel: b.Channel,
+	}
+
+	// Get unique pairs count
+	b.db.QueryRow(`
+		SELECT COUNT(DISTINCT word1 || '|' || word2) FROM transitions
+	`).Scan(&stats.UniquePairs)
+
+	// Get total entries
+	b.db.QueryRow(`
+		SELECT COUNT(*) FROM transitions
+	`).Scan(&stats.TotalEntries)
+
+	// Get message count from channels table
+	stats.MessageCount, _, _ = b.cfg.GetChannelStats(b.Channel)
+
+	// Get database file size
+	brainsDir := filepath.Join(database.GetDataDir(), "brains")
+	dbPath := filepath.Join(brainsDir, b.Channel+".db")
+	if info, err := os.Stat(dbPath); err == nil {
+		stats.DbSize = info.Size()
+	}
+
+	return stats
+}
+
+// Clean removes all transitions containing blacklisted words
+func (b *Brain) Clean() (rowsRemoved int) {
+	blacklist := b.cfg.GetBlacklistedWords()
+
+	if len(blacklist) == 0 {
+		return 0
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, word := range blacklist {
+		result, _ := b.db.Exec(`
+			DELETE FROM transitions 
+			WHERE word1 = ? OR word2 = ? OR next_word = ?
+		`, word, word, word)
+
+		if result != nil {
+			affected, _ := result.RowsAffected()
+			rowsRemoved += int(affected)
+		}
+	}
+
+	return rowsRemoved
+}
+
+// Delete removes all brain data for this channel (deletes the database file)
+func (b *Brain) Delete() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Close the database connection
+	if b.db != nil {
+		b.db.Close()
+		b.db = nil
+	}
+
+	// Delete the database file
+	brainsDir := filepath.Join(database.GetDataDir(), "brains")
+	dbPath := filepath.Join(brainsDir, b.Channel+".db")
+
+	// Also delete WAL and SHM files if they exist
+	os.Remove(dbPath + "-wal")
+	os.Remove(dbPath + "-shm")
+
+	return os.Remove(dbPath)
+}
+
+// Optimize runs VACUUM on the brain database
+func (b *Brain) Optimize() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	_, err := b.db.Exec("VACUUM")
+	return err
+}
+
+// Transition represents a single transition entry
+type Transition struct {
+	Word1    string `json:"word1"`
+	Word2    string `json:"word2"`
+	NextWord string `json:"next_word"`
+	Count    int    `json:"count"`
+}
+
+// TransitionsResult contains paginated transitions
+type TransitionsResult struct {
+	Transitions []Transition `json:"transitions"`
+	Total       int          `json:"total"`
+	Page        int          `json:"page"`
+	PageSize    int          `json:"page_size"`
+}
+
+// GetTransitions returns paginated transitions, optionally filtered by search
+func (b *Brain) GetTransitions(search string, page, pageSize int) TransitionsResult {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	result := TransitionsResult{
+		Transitions: []Transition{},
+		Page:        page,
+		PageSize:    pageSize,
+	}
+
+	offset := (page - 1) * pageSize
+
+	// Count total
+	var countQuery string
+	var countArgs []interface{}
+	if search != "" {
+		countQuery = `SELECT COUNT(*) FROM transitions WHERE word1 LIKE ? OR word2 LIKE ? OR next_word LIKE ?`
+		searchPattern := "%" + search + "%"
+		countArgs = []interface{}{searchPattern, searchPattern, searchPattern}
+	} else {
+		countQuery = `SELECT COUNT(*) FROM transitions`
+	}
+	b.db.QueryRow(countQuery, countArgs...).Scan(&result.Total)
+
+	// Fetch transitions
+	var query string
+	var args []interface{}
+	if search != "" {
+		query = `SELECT word1, word2, next_word, count FROM transitions 
+			WHERE word1 LIKE ? OR word2 LIKE ? OR next_word LIKE ?
+			ORDER BY count DESC LIMIT ? OFFSET ?`
+		searchPattern := "%" + search + "%"
+		args = []interface{}{searchPattern, searchPattern, searchPattern, pageSize, offset}
+	} else {
+		query = `SELECT word1, word2, next_word, count FROM transitions ORDER BY count DESC LIMIT ? OFFSET ?`
+		args = []interface{}{pageSize, offset}
+	}
+
+	rows, err := b.db.Query(query, args...)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var t Transition
+		if err := rows.Scan(&t.Word1, &t.Word2, &t.NextWord, &t.Count); err == nil {
+			result.Transitions = append(result.Transitions, t)
+		}
+	}
+
+	return result
+}
+
+// DeleteTransition removes a specific transition
+func (b *Brain) DeleteTransition(word1, word2, nextWord string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	_, err := b.db.Exec(`DELETE FROM transitions WHERE word1 = ? AND word2 = ? AND next_word = ?`,
+		word1, word2, nextWord)
+	return err
+}
+
+func (b *Brain) containsBlacklistedWord(message string) bool {
+	words := strings.Fields(strings.ToLower(message))
+	for _, word := range words {
+		if b.cfg.IsBlacklistedWord(word) {
+			return true
+		}
+	}
+	return false
+}
+
+func isMostlyEnglish(text string) bool {
+	englishCount := 0
+	totalCount := 0
+
+	for _, r := range text {
+		if unicode.IsLetter(r) {
+			totalCount++
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				englishCount++
+			}
+		}
+	}
+
+	if totalCount == 0 {
+		return false
+	}
+
+	return float64(englishCount)/float64(totalCount) >= 0.7
+}
+
+func containsLink(text string) bool {
+	lower := strings.ToLower(text)
+	// Check for common URL patterns
+	linkPatterns := []string{
+		"http://",
+		"https://",
+		"www.",
+		".com",
+		".org",
+		".net",
+		".tv",
+		".gg",
+		".io",
+		".co",
+		".me",
+		".be",
+	}
+	for _, pattern := range linkPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}

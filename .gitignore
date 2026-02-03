@@ -1,0 +1,29 @@
+# Executables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+twitchbot
+twitchbot-linux-arm64
+
+# Build output
+/build/
+/dist/
+
+# Go workspace
+go.work
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local config/data (don't commit user data)
+# Uncomment if you don't want to track local bot data:
+# ~/.twitchbot/

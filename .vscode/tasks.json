@@ -1,0 +1,74 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "go build -o twitchbot.exe ./cmd/bot",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$go"],
+            "detail": "Build e_n_u_f 2.0 executable"
+        },
+        {
+            "label": "Run",
+            "type": "shell",
+            "command": "go run ./cmd/bot",
+            "group": "none",
+            "problemMatcher": ["$go"],
+            "detail": "Run e_n_u_f 2.0",
+            "isBackground": true,
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Build & Run",
+            "type": "shell",
+            "command": "go build -o twitchbot.exe ./cmd/bot && .\\twitchbot.exe",
+            "group": "none",
+            "problemMatcher": ["$go"],
+            "detail": "Build and run the bot",
+            "isBackground": true,
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Build for Raspberry Pi",
+            "type": "shell",
+            "command": "set CGO_ENABLED=1 && set GOOS=linux && set GOARCH=arm64 && go build -o twitchbot-linux-arm64 ./cmd/bot",
+            "group": "build",
+            "problemMatcher": ["$go"],
+            "detail": "Cross-compile for Raspberry Pi (requires cross-compiler)"
+        },
+        {
+            "label": "Tidy Modules",
+            "type": "shell",
+            "command": "go mod tidy",
+            "group": "none",
+            "problemMatcher": [],
+            "detail": "Download and tidy Go modules"
+        },
+        {
+            "label": "Clean Build",
+            "type": "shell",
+            "command": "go clean && go build -o twitchbot.exe ./cmd/bot",
+            "group": "build",
+            "problemMatcher": ["$go"],
+            "detail": "Clean and rebuild"
+        },
+        {
+            "label": "Open Web UI",
+            "type": "shell",
+            "command": "Start-Process 'http://localhost:24601'",
+            "group": "none",
+            "problemMatcher": [],
+            "detail": "Open the bot's web interface in browser"
+        }
+    ]
+}

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>e_n_u_f 2.0 - Control Panel</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 e_n_u_f 2.0</h1>
+            <span id="status-indicator" class="status-badge">Connecting...</span>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+            <button class="tab-btn" data-tab="config">Configuration</button>
+            <button class="tab-btn" data-tab="channels">Channels</button>
+            <button class="tab-btn" data-tab="database">Database</button>
+            <button class="tab-btn" data-tab="blacklist">Blacklist</button>
+        </nav>
+
+        <!-- Dashboard Tab -->
+        <section id="dashboard" class="tab-content active">
+            <div class="card">
+                <h2>Bot Status</h2>
+                <div id="bot-status">
+                    <div class="status-row">
+                        <span>Configuration:</span>
+                        <span id="config-status" class="status-value">-</span>
+                    </div>
+                    <div class="status-row">
+                        <span>Connected Channels:</span>
+                        <span id="channel-count" class="status-value">0</span>
+                    </div>
+                    <div class="status-row">
+                        <span>Total Transitions:</span>
+                        <span id="transition-count" class="status-value">0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Connected Channels</h2>
+                <div id="channel-list" class="list"></div>
+            </div>
+            <div class="card">
+                <h2>Recent Activity</h2>
+                <div id="activity-log" class="log"></div>
+            </div>
+        </section>
+
+        <!-- Configuration Tab -->
+        <section id="config" class="tab-content">
+            <div class="card">
+                <h2>Twitch Login</h2>
+                <div id="login-section">
+                    <div id="logged-out-view">
+                        <p>Enter your Twitch Application Client ID and click "Login with Twitch" to authenticate.</p>
+                        <p class="hint">Get a Client ID from <a href="https://dev.twitch.tv/console/apps" target="_blank">dev.twitch.tv/console/apps</a></p>
+                        <p class="hint">Set the redirect URL to: <code id="redirect-url">http://localhost:24601/auth/callback</code></p>
+                        <div class="form-group">
+                            <label for="client-id">Client ID</label>
+                            <input type="text" id="client-id" placeholder="Your Twitch App Client ID">
+                        </div>
+                        <button id="save-client-id-btn" class="btn">Save Client ID</button>
+                        <button id="twitch-login-btn" class="btn twitch-btn" disabled>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+                            Login with Twitch
+                        </button>
+                    </div>
+                    <div id="logged-in-view" style="display: none;">
+                        <div class="login-status">
+                            <span class="twitch-icon">🟣</span>
+                            <span>Logged in as: <strong id="logged-username">-</strong></span>
+                        </div>
+                        <button id="logout-btn" class="btn danger">Logout</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Message Settings</h2>
+                <div class="form-group">
+                    <label>Messages before auto-response:</label>
+                    <div class="slider-group">
+                        <input type="range" id="interval-slider" min="5" max="100" value="35">
+                        <span id="interval-value">35</span>
+                    </div>
+                </div>
+                <button id="save-interval-btn" class="btn primary">Save Interval</button>
+            </div>
+        </section>
+
+        <!-- Channels Tab -->
+        <section id="channels" class="tab-content">
+            <div class="card">
+                <h2>Manage Channels</h2>
+                <div class="input-group">
+                    <input type="text" id="new-channel" placeholder="Enter channel name...">
+                    <button id="add-channel-btn" class="btn primary">Join Channel</button>
+                </div>
+                <div id="channels-list" class="list"></div>
+            </div>
+        </section>
+
+        <!-- Database Tab -->
+        <section id="database" class="tab-content">
+            <div class="card">
+                <h2>Database Statistics</h2>
+                <div id="db-stats">
+                    <div class="status-row">
+                        <span>Total Transitions:</span>
+                        <span id="db-transitions" class="status-value">0</span>
+                    </div>
+                    <div class="status-row">
+                        <span>Unique Channels:</span>
+                        <span id="db-channels" class="status-value">0</span>
+                    </div>
+                    <div class="status-row">
+                        <span>Blacklisted Words:</span>
+                        <span id="db-blacklisted" class="status-value">0</span>
+                    </div>
+                    <div class="status-row">
+                        <span>Data Directory:</span>
+                        <span id="db-directory" class="status-value">-</span>
+                    </div>
+                </div>
+                <div class="actions">
+                    <button id="optimize-db-btn" class="btn">Optimize Database</button>
+                    <button id="clean-all-btn" class="btn warning">Clean All (Remove Blacklisted)</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Channel Brain Data</h2>
+                <div id="brains-list" class="list"></div>
+            </div>
+
+            <!-- Brain Editor Modal -->
+            <div id="brain-editor-modal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>Brain Editor: <span id="editor-channel">-</span></h2>
+                        <button class="close-btn" onclick="closeBrainEditor()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="search-bar">
+                            <input type="text" id="transition-search" placeholder="Search transitions...">
+                            <button class="btn" onclick="searchTransitions()">Search</button>
+                        </div>
+                        <div class="editor-stats">
+                            <span>Showing <span id="editor-showing">0</span> of <span id="editor-total">0</span> transitions</span>
+                        </div>
+                        <div id="transitions-list" class="transitions-table"></div>
+                        <div class="pagination">
+                            <button class="btn" id="prev-page-btn" onclick="prevPage()" disabled>Previous</button>
+                            <span>Page <span id="current-page">1</span></span>
+                            <button class="btn" id="next-page-btn" onclick="nextPage()">Next</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Blacklist Tab -->
+        <section id="blacklist" class="tab-content">
+            <div class="card">
+                <h2>Word Blacklist</h2>
+                <p>Messages containing these words will be ignored and won't be learned.</p>
+                <div class="input-group">
+                    <input type="text" id="new-blacklist-word" placeholder="Enter word to blacklist...">
+                    <button id="add-blacklist-btn" class="btn primary">Add</button>
+                </div>
+                <div id="blacklist-words" class="tag-list"></div>
+                <div class="actions">
+                    <button id="clear-blacklist-btn" class="btn danger">Clear All</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Ignored Users</h2>
+                <p>Messages from these users will be ignored globally. Users can type <code>!ignoreme</code> to add themselves or <code>!listentome</code> to remove themselves.</p>
+                <div class="input-group">
+                    <input type="text" id="new-ignored-user" placeholder="Enter username to ignore...">
+                    <button id="add-ignored-user-btn" class="btn primary">Add</button>
+                </div>
+                <div id="ignored-users" class="tag-list"></div>
+            </div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
