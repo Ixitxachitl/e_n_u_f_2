@@ -1,0 +1,21 @@
+[Unit]
+Description=e_n_u_f 2.0 Twitch Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi
+ExecStart=/home/pi/twitchbot
+Restart=always
+RestartSec=10
+Environment=HOME=/home/pi
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=twitchbot
+
+[Install]
+WantedBy=multi-user.target

@@ -41,10 +41,10 @@
         {
             "label": "Build for Raspberry Pi",
             "type": "shell",
-            "command": "set CGO_ENABLED=1 && set GOOS=linux && set GOARCH=arm64 && go build -o twitchbot-linux-arm64 ./cmd/bot",
+            "command": "$env:GOOS='linux'; $env:GOARCH='arm64'; $env:CGO_ENABLED='0'; go build -o twitchbot-linux-arm64 ./cmd/bot",
             "group": "build",
             "problemMatcher": ["$go"],
-            "detail": "Cross-compile for Raspberry Pi (requires cross-compiler)"
+            "detail": "Cross-compile for Raspberry Pi ARM64"
         },
         {
             "label": "Tidy Modules",

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // DB is the global database instance
@@ -36,7 +36,7 @@ func Init() error {
 
 		dbPath := filepath.Join(dataDir, "twitchbot.db")
 		var err error
-		db, err = sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+		db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 		if err != nil {
 			initErr = err
 			return

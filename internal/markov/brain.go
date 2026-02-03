@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"twitchbot/internal/config"
 	"twitchbot/internal/database"
@@ -61,7 +61,7 @@ func (b *Brain) initDB() error {
 
 	dbPath := filepath.Join(brainsDir, b.Channel+".db")
 	var err error
-	b.db, err = sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	b.db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return err
 	}

@@ -20,8 +20,8 @@ A multi-channel Twitch chat bot written in Go with Markov chain text generation,
 
 ### Prerequisites
 
-- Go 1.21 or later (with CGO enabled for SQLite)
-- Twitch account with OAuth token
+- Go 1.21 or later
+- Twitch account for the bot
 
 ### Running
 
@@ -37,8 +37,44 @@ go build -o twitchbot ./cmd/bot
 ### Cross-Compile for Raspberry Pi
 
 ```bash
-# Requires CGO cross-compilation setup
-CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc GOOS=linux GOARCH=arm64 go build -o twitchbot ./cmd/bot
+# Pure Go - no CGO or cross-compiler needed!
+GOOS=linux GOARCH=arm64 go build -o twitchbot-linux-arm64 ./cmd/bot
+```
+
+## Raspberry Pi Deployment
+
+1. **Build the ARM64 binary** (on your dev machine):
+   ```bash
+   GOOS=linux GOARCH=arm64 go build -o twitchbot ./cmd/bot
+   ```
+
+2. **Copy files to your Pi**:
+   ```bash
+   scp twitchbot deploy/twitchbot.service deploy/deploy.sh pi@<pi-ip>:~/
+   ```
+
+3. **Run the deploy script on your Pi**:
+   ```bash
+   ssh pi@<pi-ip>
+   chmod +x deploy.sh
+   sudo ./deploy.sh
+   ```
+
+4. **Start the bot**:
+   ```bash
+   sudo systemctl start twitchbot
+   ```
+
+5. **Access the Web UI** at `http://<pi-ip>:24601`
+
+### Service Commands
+
+```bash
+sudo systemctl start twitchbot    # Start the bot
+sudo systemctl stop twitchbot     # Stop the bot
+sudo systemctl restart twitchbot  # Restart the bot
+sudo systemctl status twitchbot   # Check status
+journalctl -u twitchbot -f        # View logs
 ```
 
 ## Configuration
