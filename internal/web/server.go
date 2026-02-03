@@ -2,13 +2,23 @@ package web
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"embed"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
+	"math/big"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -86,7 +96,68 @@ func (s *Server) Start() error {
 		Handler: mux,
 	}
 
-	return s.server.ListenAndServe()
+	// Try HTTPS first, fall back to HTTP
+	certFile, keyFile := s.getCertPaths()
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		log.Println("Generating self-signed certificate for HTTPS...")
+		if err := s.generateSelfSignedCert(certFile, keyFile); err != nil {
+			log.Printf("Failed to generate certificate: %v, falling back to HTTP", err)
+			return s.server.ListenAndServe()
+		}
+	}
+
+	log.Printf("Starting HTTPS server on port %d", s.cfg.GetWebPort())
+	return s.server.ListenAndServeTLS(certFile, keyFile)
+}
+
+func (s *Server) getCertPaths() (string, string) {
+	dataDir := database.GetDataDir()
+	return filepath.Join(dataDir, "cert.pem"), filepath.Join(dataDir, "key.pem")
+}
+
+func (s *Server) generateSelfSignedCert(certFile, keyFile string) error {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"e_n_u_f 2.0"},
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour), // 1 year
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"localhost"},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("192.168.0.1")},
+	}
+
+	// Add common local IPs
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return err
+	}
+
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		return err
+	}
+	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	certOut.Close()
+
+	keyOut, err := os.Create(keyFile)
+	if err != nil {
+		return err
+	}
+	privBytes, _ := x509.MarshalECPrivateKey(priv)
+	pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: privBytes})
+	keyOut.Close()
+
+	log.Printf("Certificate generated: %s", certFile)
+	return nil
 }
 
 // Stop gracefully stops the web server
