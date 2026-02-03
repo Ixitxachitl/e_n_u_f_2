@@ -146,7 +146,6 @@ function setupEventListeners() {
     elements.newBlacklistWord.addEventListener('keypress', e => {
         if (e.key === 'Enter') addBlacklistWord();
     });
-    document.getElementById('clear-blacklist-btn').addEventListener('click', clearBlacklist);
 
     // Ignored users
     document.getElementById('add-ignored-user-btn').addEventListener('click', addIgnoredUser);
@@ -312,7 +311,21 @@ function renderChannels(channels) {
         return;
     }
 
-    const html = channels.map(ch => `
+    // Dashboard view - no actions, just status
+    const dashboardHtml = channels.map(ch => `
+        <div class="list-item">
+            <div class="info">
+                <div class="name">
+                    <span class="status-dot ${ch.connected ? 'connected' : 'disconnected'}"></span>
+                    ${ch.channel}
+                </div>
+                <div class="stats">${ch.messages.toLocaleString()} messages</div>
+            </div>
+        </div>
+    `).join('');
+
+    // Channels tab - with actions
+    const channelsHtml = channels.map(ch => `
         <div class="list-item">
             <div class="info">
                 <div class="name">
@@ -328,8 +341,8 @@ function renderChannels(channels) {
         </div>
     `).join('');
 
-    elements.channelList.innerHTML = html;
-    elements.channelsList.innerHTML = html;
+    elements.channelList.innerHTML = dashboardHtml;
+    elements.channelsList.innerHTML = channelsHtml;
 }
 
 function renderBrains(brains) {
