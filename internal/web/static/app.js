@@ -30,6 +30,8 @@ const api = {
 let ws = null;
 const activityLog = [];
 const MAX_LOG_ENTRIES = 100;
+const appRamHistory = [];
+const MAX_RAM_POINTS = 20;
 
 // DOM Elements
 const elements = {};
@@ -100,6 +102,14 @@ function cacheElements() {
     elements.dbChannels = document.getElementById('db-channels');
     elements.dbBlacklisted = document.getElementById('db-blacklisted');
     elements.dbDirectory = document.getElementById('db-directory');
+    elements.ramBar = document.getElementById('ram-bar');
+    elements.ramValue = document.getElementById('ram-value');
+    elements.ramDetails = document.getElementById('ram-details');
+    elements.storageValue = document.getElementById('storage-value');
+    elements.storageDetails = document.getElementById('storage-details');
+    elements.appRamSparkline = document.getElementById('app-ram-sparkline');
+    elements.appRamValue = document.getElementById('app-ram-value');
+    elements.dbSizeValue = document.getElementById('db-size-value');
 }
 
 // Tab Navigation
@@ -227,6 +237,111 @@ async function loadStatus() {
     
     elements.channelCount.textContent = status.channels ? status.channels.length : 0;
     elements.transitionCount.textContent = status.database ? status.database.total_transitions.toLocaleString() : 0;
+    
+    // Update RAM monitor
+    if (status.memory) {
+        const usedGB = status.memory.used_mb / 1024;
+        const totalGB = status.memory.total_mb / 1024;
+        const percent = status.memory.used_percent;
+        
+        // Update bar width and color
+        elements.ramBar.style.width = `${percent}%`;
+        elements.ramBar.classList.remove('high', 'critical');
+        if (percent >= 90) {
+            elements.ramBar.classList.add('critical');
+        } else if (percent >= 75) {
+            elements.ramBar.classList.add('high');
+        }
+        
+        // Update text
+        elements.ramValue.textContent = `${Math.round(percent)}%`;
+        elements.ramDetails.textContent = `${usedGB.toFixed(1)} / ${totalGB.toFixed(1)} GB`;
+    }
+    
+    // Update app RAM monitor with sparkline
+    if (status.app_memory) {
+        const appMB = status.app_memory.alloc_mb;
+        appRamHistory.push(appMB);
+        if (appRamHistory.length > MAX_RAM_POINTS) {
+            appRamHistory.shift();
+        }
+        elements.appRamValue.textContent = `${appMB.toFixed(1)} MB`;
+        drawAppRamSparkline();
+    }
+    
+    // Update storage monitor
+    if (status.storage) {
+        const usedGB = status.storage.used_gb;
+        const totalGB = status.storage.total_gb;
+        const percent = status.storage.used_percent;
+        
+        elements.storageValue.textContent = `${Math.round(percent)}%`;
+        elements.storageDetails.textContent = `${usedGB.toFixed(0)} / ${totalGB.toFixed(0)} GB`;
+    }
+    
+    // Update database size
+    if (status.database && status.database.total_size) {
+        const sizeBytes = status.database.total_size;
+        const sizeMB = sizeBytes / 1024 / 1024;
+        if (sizeMB >= 1024) {
+            elements.dbSizeValue.textContent = `${(sizeMB / 1024).toFixed(2)} GB`;
+        } else {
+            elements.dbSizeValue.textContent = `${sizeMB.toFixed(1)} MB`;
+        }
+    }
+}
+
+function drawAppRamSparkline() {
+    const canvas = elements.appRamSparkline;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    const padding = 1;
+    
+    // Clear canvas
+    ctx.clearRect(0, 0, width, height);
+    
+    if (appRamHistory.length < 2) return;
+    
+    // Find min/max for scaling
+    const min = Math.min(...appRamHistory) * 0.9;
+    const max = Math.max(...appRamHistory) * 1.1;
+    const range = max - min || 1;
+    
+    // Draw the sparkline
+    ctx.beginPath();
+    ctx.strokeStyle = '#9b59b6';
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    
+    const stepX = (width - padding * 2) / (MAX_RAM_POINTS - 1);
+    
+    appRamHistory.forEach((val, i) => {
+        const x = padding + i * stepX;
+        const y = height - padding - ((val - min) / range) * (height - padding * 2);
+        
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    });
+    
+    ctx.stroke();
+    
+    // Draw fill gradient under the line
+    const gradient = ctx.createLinearGradient(0, 0, 0, height);
+    gradient.addColorStop(0, 'rgba(155, 89, 182, 0.3)');
+    gradient.addColorStop(1, 'rgba(155, 89, 182, 0)');
+    
+    ctx.lineTo(padding + (appRamHistory.length - 1) * stepX, height);
+    ctx.lineTo(padding, height);
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
 }
 
 async function loadConfig() {

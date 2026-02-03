@@ -19,11 +19,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/mem"
 
 	"twitchbot/internal/config"
 	"twitchbot/internal/database"
@@ -383,11 +386,49 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	// Get system memory stats
+	var memoryData map[string]interface{}
+	if vmStat, err := mem.VirtualMemory(); err == nil {
+		memoryData = map[string]interface{}{
+			"total_mb":     float64(vmStat.Total) / 1024 / 1024,
+			"used_mb":      float64(vmStat.Used) / 1024 / 1024,
+			"available_mb": float64(vmStat.Available) / 1024 / 1024,
+			"used_percent": vmStat.UsedPercent,
+		}
+	}
+
+	// Get app memory stats
+	var appMem runtime.MemStats
+	runtime.ReadMemStats(&appMem)
+	appMemoryData := map[string]interface{}{
+		"alloc_mb": float64(appMem.Alloc) / 1024 / 1024,
+		"sys_mb":   float64(appMem.Sys) / 1024 / 1024,
+	}
+
+	// Get disk stats for the database directory
+	var storageData map[string]interface{}
+	dbDir := database.GetDataDir()
+	if diskStat, err := disk.Usage(dbDir); err == nil {
+		storageData = map[string]interface{}{
+			"path":         diskStat.Path,
+			"total_gb":     float64(diskStat.Total) / 1024 / 1024 / 1024,
+			"used_gb":      float64(diskStat.Used) / 1024 / 1024 / 1024,
+			"free_gb":      float64(diskStat.Free) / 1024 / 1024 / 1024,
+			"used_percent": diskStat.UsedPercent,
+		}
+	}
+
+	// Get database sizes
+	dbStats := s.manager.GetBrainManager().GetDatabaseStats()
+
 	status := map[string]interface{}{
 		"configured":    s.cfg.IsConfigured(),
 		"client_id_set": s.cfg.GetClientID() != "",
 		"channels":      s.manager.GetChannelStatus(),
-		"database":      s.manager.GetBrainManager().GetDatabaseStats(),
+		"database":      dbStats,
+		"memory":        memoryData,
+		"app_memory":    appMemoryData,
+		"storage":       storageData,
 	}
 	jsonResponse(w, status)
 }

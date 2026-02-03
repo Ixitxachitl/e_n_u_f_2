@@ -42,7 +42,9 @@ func main() {
 		}
 	}()
 
-	log.Printf("Web UI available at http://localhost:%d", cfg.GetWebPort())
+	log.Printf("Web UI available at:")
+	log.Printf("  HTTPS: https://localhost:%d", cfg.GetWebPort())
+	log.Printf("  HTTP:  http://localhost:%d", cfg.GetWebPort()+1)
 
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)

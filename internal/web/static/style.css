@@ -44,6 +44,100 @@ header h1 {
     font-size: 1.8rem;
 }
 
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.monitor-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 10px;
+    background-color: var(--bg-tertiary);
+    border-radius: 12px;
+}
+
+.system-monitor {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.app-monitor {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.65rem;
+    padding-left: 2px;
+}
+
+.app-monitor-value {
+    font-family: monospace;
+    font-weight: 500;
+    color: var(--accent);
+    font-size: 0.65rem;
+}
+
+.app-monitor-label {
+    color: var(--text-muted);
+    font-size: 0.6rem;
+}
+
+#app-ram-sparkline {
+    display: block;
+}
+
+.monitor-label {
+    font-weight: 600;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.monitor-bar-container {
+    width: 50px;
+    height: 6px;
+    background-color: var(--bg-primary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.monitor-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--success), var(--warning));
+    border-radius: 3px;
+    transition: width 0.3s ease, background 0.3s ease;
+}
+
+.monitor-bar.high {
+    background: linear-gradient(90deg, var(--warning), var(--danger));
+}
+
+.monitor-bar.critical {
+    background: var(--danger);
+}
+
+.monitor-value {
+    min-width: 28px;
+    text-align: right;
+    font-family: monospace;
+    font-weight: 600;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+}
+
+.monitor-details {
+    font-family: monospace;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+}
+
 .status-badge {
     padding: 6px 12px;
     border-radius: 20px;

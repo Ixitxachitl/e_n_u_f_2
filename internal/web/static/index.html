@@ -10,7 +10,34 @@
     <div class="container">
         <header>
             <h1>🤖 e_n_u_f 2.0</h1>
-            <span id="status-indicator" class="status-badge">Connecting...</span>
+            <div class="header-right">
+                <div class="monitor-group" title="Memory Usage">
+                    <div class="system-monitor">
+                        <span class="monitor-label">RAM</span>
+                        <div class="monitor-bar-container">
+                            <div id="ram-bar" class="monitor-bar"></div>
+                        </div>
+                        <span id="ram-value" class="monitor-value">--%</span>
+                        <span id="ram-details" class="monitor-details">-- / -- GB</span>
+                    </div>
+                    <div class="app-monitor">
+                        <canvas id="app-ram-sparkline" width="60" height="16"></canvas>
+                        <span id="app-ram-value" class="app-monitor-value">-- MB</span>
+                    </div>
+                </div>
+                <div class="monitor-group" title="Storage Usage">
+                    <div class="system-monitor">
+                        <span class="monitor-label">DISK</span>
+                        <span id="storage-value" class="monitor-value">--%</span>
+                        <span id="storage-details" class="monitor-details">-- / -- GB</span>
+                    </div>
+                    <div class="app-monitor">
+                        <span id="db-size-value" class="app-monitor-value">-- MB</span>
+                        <span class="app-monitor-label">databases</span>
+                    </div>
+                </div>
+                <span id="status-indicator" class="status-badge">Connecting...</span>
+            </div>
         </header>
 
         <nav class="tabs">
