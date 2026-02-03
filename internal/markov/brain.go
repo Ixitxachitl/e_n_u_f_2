@@ -76,9 +76,25 @@ func (b *Brain) initDB() error {
 			PRIMARY KEY (word1, word2, next_word)
 		);
 		CREATE INDEX IF NOT EXISTS idx_word1_word2 ON transitions(word1, word2);
+		
+		CREATE TABLE IF NOT EXISTS state (
+			key TEXT PRIMARY KEY,
+			value INTEGER DEFAULT 0,
+			value_text TEXT DEFAULT ''
+		);
 	`)
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Load persisted message counter
+	var counter int
+	err = b.db.QueryRow("SELECT value FROM state WHERE key = 'msg_counter'").Scan(&counter)
+	if err == nil {
+		b.msgCounter = counter
+	}
+
+	return nil
 }
 
 // Close closes the brain's database connection
@@ -132,13 +148,16 @@ func (b *Brain) ProcessMessage(message, username, botUsername string) string {
 	// Increment message count
 	b.cfg.IncrementChannelMessages(b.Channel)
 
-	// Check if we should respond
+	// Check if we should respond (use per-channel interval)
 	b.mu.Lock()
 	b.msgCounter++
-	shouldRespond := b.msgCounter >= b.cfg.GetMessageInterval()
+	channelInterval := b.cfg.GetChannelMessageInterval(b.Channel)
+	shouldRespond := b.msgCounter >= channelInterval
 	if shouldRespond {
 		b.msgCounter = 0
 	}
+	// Persist counter to database
+	b.saveCounter()
 	b.mu.Unlock()
 
 	if shouldRespond {
@@ -146,6 +165,7 @@ func (b *Brain) ProcessMessage(message, username, botUsername string) string {
 		for i := 0; i < 5; i++ {
 			response := b.Generate(20)
 			if response != "" && !b.containsBlacklistedWord(response) {
+				b.saveLastMessage(response)
 				return response
 			}
 		}
@@ -159,6 +179,41 @@ func (b *Brain) GetMessageCounter() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.msgCounter
+}
+
+// saveCounter persists the message counter to the database (must be called with lock held)
+func (b *Brain) saveCounter() {
+	if b.db == nil {
+		return
+	}
+	b.db.Exec(`
+		INSERT INTO state (key, value) VALUES ('msg_counter', ?)
+		ON CONFLICT(key) DO UPDATE SET value = ?
+	`, b.msgCounter, b.msgCounter)
+}
+
+// saveLastMessage persists the last bot message to the database
+func (b *Brain) saveLastMessage(message string) {
+	if b.db == nil {
+		return
+	}
+	b.db.Exec(`
+		INSERT INTO state (key, value_text) VALUES ('last_message', ?)
+		ON CONFLICT(key) DO UPDATE SET value_text = ?
+	`, message, message)
+}
+
+// GetLastMessage returns the last message the bot sent in this channel
+func (b *Brain) GetLastMessage() string {
+	if b.db == nil {
+		return ""
+	}
+	var msg string
+	err := b.db.QueryRow("SELECT value_text FROM state WHERE key = 'last_message'").Scan(&msg)
+	if err != nil {
+		return ""
+	}
+	return msg
 }
 
 // learn adds a message to the brain

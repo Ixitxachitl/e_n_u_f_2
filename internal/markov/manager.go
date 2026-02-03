@@ -72,7 +72,7 @@ func (m *Manager) RemoveBrain(channel string) {
 // GetChannelCountdown returns the messages until next response for a channel
 func (m *Manager) GetChannelCountdown(channel string) (messagesUntilResponse int, interval int) {
 	channel = strings.ToLower(channel)
-	interval = m.cfg.GetMessageInterval()
+	interval = m.cfg.GetChannelMessageInterval(channel) // Use per-channel interval
 
 	m.mu.RLock()
 	brain, exists := m.brains[channel]
@@ -88,6 +88,21 @@ func (m *Manager) GetChannelCountdown(channel string) (messagesUntilResponse int
 		messagesUntilResponse = 0
 	}
 	return messagesUntilResponse, interval
+}
+
+// GetLastMessage returns the last message the bot sent in a channel
+func (m *Manager) GetLastMessage(channel string) string {
+	channel = strings.ToLower(channel)
+
+	m.mu.RLock()
+	brain, exists := m.brains[channel]
+	m.mu.RUnlock()
+
+	if !exists || brain == nil {
+		return ""
+	}
+
+	return brain.GetLastMessage()
 }
 
 // ListBrains returns stats for all channels with brain data

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/textproto"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -228,6 +229,27 @@ func (c *Client) handleMessage(raw string) {
 			if cmd == "!join" || cmd == "!leave" {
 				if c.onCommand != nil {
 					c.onCommand(msg.Channel, msg.Username, cmd)
+				}
+				return
+			}
+
+			// !response <number> - set per-channel message interval
+			if strings.HasPrefix(cmd, "!response") {
+				parts := strings.Fields(msg.Content)
+				if len(parts) == 2 {
+					num, err := strconv.Atoi(parts[1])
+					if err != nil || num < 1 || num > 100 {
+						c.SendMessage(fmt.Sprintf("@%s Please use !response <1-100> to set how many messages before I respond in your channel.", msg.Username))
+						return
+					}
+					userChannel := strings.ToLower(msg.Username)
+					c.cfg.SetChannelMessageInterval(userChannel, num)
+					c.SendMessage(fmt.Sprintf("@%s I will now respond every %d messages in your channel!", msg.Username, num))
+				} else {
+					// Show current setting
+					userChannel := strings.ToLower(msg.Username)
+					current := c.cfg.GetChannelMessageInterval(userChannel)
+					c.SendMessage(fmt.Sprintf("@%s Your channel is set to %d messages. Use !response <1-100> to change.", msg.Username, current))
 				}
 				return
 			}

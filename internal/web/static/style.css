@@ -316,7 +316,8 @@ input[type="password"]::placeholder {
 .live-channel-item {
     display: flex;
     align-items: center;
-    gap: 16px;
+    justify-content: flex-start;
+    gap: 12px;
     cursor: pointer;
 }
 
@@ -329,22 +330,22 @@ input[type="password"]::placeholder {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-width: 70px;
-    height: 70px;
+    min-width: 55px;
+    height: 55px;
     background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-    border-radius: 12px;
+    border-radius: 10px;
     flex-shrink: 0;
 }
 
 .countdown-number {
-    font-size: 1.8rem;
+    font-size: 1.5rem;
     font-weight: bold;
     line-height: 1;
     color: #fff;
 }
 
 .countdown-label {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     text-transform: uppercase;
     color: rgba(255, 255, 255, 0.8);
     margin-top: 2px;
@@ -366,6 +367,63 @@ input[type="password"]::placeholder {
     transition: width 0.3s ease;
 }
 
+.last-bot-message {
+    font-size: 0.8rem;
+    color: var(--accent);
+    margin-top: 6px;
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 400px;
+}
+
+/* Channel profile avatars */
+.channel-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.channel-avatar-placeholder {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background-color: var(--accent);
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.channel-avatar-large {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.channel-avatar-placeholder-large {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background-color: var(--accent);
+    flex-shrink: 0;
+}
+
+/* Bot avatar in config section */
+.bot-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
 .channel-link {
     color: var(--text-primary);
     text-decoration: none;
@@ -374,6 +432,73 @@ input[type="password"]::placeholder {
 .channel-link:hover {
     color: var(--accent);
     text-decoration: underline;
+}
+
+.channel-interval {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    margin-right: 10px;
+}
+
+.channel-interval .interval-value {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    min-width: 24px;
+    text-align: right;
+}
+
+.channel-interval input[type="range"] {
+    width: 100px;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.channel-interval input[type="range"]::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+}
+
+.channel-interval input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    margin-top: -5px;
+}
+
+.channel-interval input[type="range"]::-moz-range-track {
+    width: 100%;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+}
+
+.channel-interval input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+}
+
+.channel-interval input[type="range"]:focus {
+    outline: none;
+}
+
+.channel-interval input[type="range"]::-webkit-slider-thumb:hover {
+    background: var(--accent-hover);
 }
 
 .list-item .actions {
@@ -429,6 +554,7 @@ input[type="range"] {
     flex: 1;
     height: 6px;
     -webkit-appearance: none;
+    appearance: none;
     background: var(--bg-tertiary);
     border-radius: 3px;
 }
@@ -693,9 +819,43 @@ input[type="range"]::-webkit-slider-thumb {
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 15px;
+    gap: 10px;
 }
 
 .pagination span {
     color: var(--text-secondary);
+}
+
+.page-numbers {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.page-num {
+    min-width: 32px;
+    height: 32px;
+    border: 1px solid var(--border);
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.page-num:hover {
+    background-color: var(--bg-secondary);
+    border-color: var(--accent);
+}
+
+.page-num.active {
+    background-color: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.page-ellipsis {
+    color: var(--text-secondary);
+    padding: 0 4px;
 }

@@ -75,6 +75,7 @@ func createTables() error {
 			name TEXT UNIQUE NOT NULL,
 			enabled INTEGER DEFAULT 1,
 			message_count INTEGER DEFAULT 0,
+			message_interval INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 
@@ -91,6 +92,13 @@ func createTables() error {
 			username TEXT UNIQUE NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+
+		// Twitch users table for tracking user IDs and username changes
+		`CREATE TABLE IF NOT EXISTS twitch_users (
+			twitch_id TEXT PRIMARY KEY,
+			username TEXT NOT NULL,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	for _, table := range tables {
@@ -98,6 +106,9 @@ func createTables() error {
 			return err
 		}
 	}
+
+	// Migration: add message_interval column if it doesn't exist
+	db.Exec("ALTER TABLE channels ADD COLUMN message_interval INTEGER DEFAULT 0")
 
 	// Insert default config values if not exists
 	defaults := map[string]string{

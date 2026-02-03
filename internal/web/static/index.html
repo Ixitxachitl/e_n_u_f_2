@@ -63,7 +63,6 @@
                             <label for="client-id">Client ID</label>
                             <input type="text" id="client-id" placeholder="Your Twitch App Client ID">
                         </div>
-                        <button id="save-client-id-btn" class="btn">Save Client ID</button>
                         <button id="twitch-login-btn" class="btn twitch-btn" disabled>
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
                             Login with Twitch
@@ -71,7 +70,7 @@
                     </div>
                     <div id="logged-in-view" style="display: none;">
                         <div class="login-status">
-                            <span class="twitch-icon">🟣</span>
+                            <img id="bot-avatar" src="" class="bot-avatar" alt="Bot avatar" style="display: none;">
                             <span>Logged in as: <strong id="logged-username">-</strong></span>
                         </div>
                         <button id="logout-btn" class="btn danger">Logout</button>
@@ -82,13 +81,14 @@
             <div class="card">
                 <h2>Message Settings</h2>
                 <div class="form-group">
-                    <label>Messages before auto-response:</label>
+                    <label>Default messages before auto-response:</label>
                     <div class="slider-group">
                         <input type="range" id="interval-slider" min="5" max="100" value="35">
                         <span id="interval-value">35</span>
                     </div>
+                    <p class="hint">This is the default interval for new channels. Each channel can have its own interval set via the slider in the Channels tab, or streamers can use <code>!response &lt;1-100&gt;</code> in chat.</p>
                 </div>
-                <button id="save-interval-btn" class="btn primary">Save Interval</button>
+                <button id="save-interval-btn" class="btn primary">Save Default</button>
             </div>
         </section>
 
@@ -146,17 +146,16 @@
                     </div>
                     <div class="modal-body">
                         <div class="search-bar">
-                            <input type="text" id="transition-search" placeholder="Search transitions...">
-                            <button class="btn" onclick="searchTransitions()">Search</button>
+                            <input type="text" id="transition-search" placeholder="Search transitions..." oninput="debouncedSearch()">
                         </div>
                         <div class="editor-stats">
                             <span>Showing <span id="editor-showing">0</span> of <span id="editor-total">0</span> transitions</span>
                         </div>
                         <div id="transitions-list" class="transitions-table"></div>
                         <div class="pagination">
-                            <button class="btn" id="prev-page-btn" onclick="prevPage()" disabled>Previous</button>
-                            <span>Page <span id="current-page">1</span></span>
-                            <button class="btn" id="next-page-btn" onclick="nextPage()">Next</button>
+                            <button class="btn" id="prev-page-btn" onclick="prevPage()" disabled>&laquo; Prev</button>
+                            <div class="page-numbers" id="page-numbers"></div>
+                            <button class="btn" id="next-page-btn" onclick="nextPage()">Next &raquo;</button>
                         </div>
                     </div>
                 </div>

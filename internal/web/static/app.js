@@ -93,8 +93,8 @@ function cacheElements() {
     elements.loggedOutView = document.getElementById('logged-out-view');
     elements.loggedInView = document.getElementById('logged-in-view');
     elements.loggedUsername = document.getElementById('logged-username');
+    elements.botAvatar = document.getElementById('bot-avatar');
     elements.twitchLoginBtn = document.getElementById('twitch-login-btn');
-    elements.saveClientIdBtn = document.getElementById('save-client-id-btn');
     elements.redirectUrl = document.getElementById('redirect-url');
     elements.dbTransitions = document.getElementById('db-transitions');
     elements.dbChannels = document.getElementById('db-channels');
@@ -127,8 +127,11 @@ function setupEventListeners() {
     });
 
     // OAuth login
-    elements.saveClientIdBtn.addEventListener('click', saveClientId);
-    elements.twitchLoginBtn.addEventListener('click', () => {
+    elements.twitchLoginBtn.addEventListener('click', async () => {
+        const clientId = elements.clientId.value.trim();
+        if (clientId) {
+            await api.put('/api/config', { client_id: clientId });
+        }
         window.location.href = '/auth/twitch';
     });
     document.getElementById('logout-btn').addEventListener('click', logout);
@@ -240,6 +243,14 @@ async function loadConfig() {
         elements.loggedOutView.style.display = 'none';
         elements.loggedInView.style.display = 'block';
         elements.loggedUsername.textContent = config.bot_username;
+        
+        // Set bot avatar
+        if (config.bot_profile_image) {
+            elements.botAvatar.src = config.bot_profile_image;
+            elements.botAvatar.style.display = 'inline-block';
+        } else {
+            elements.botAvatar.style.display = 'none';
+        }
     } else {
         elements.loggedOutView.style.display = 'block';
         elements.loggedInView.style.display = 'none';
@@ -258,17 +269,7 @@ function updateLoginButtonState() {
     elements.twitchLoginBtn.disabled = !hasClientId;
 }
 
-async function saveClientId() {
-    const clientId = elements.clientId.value.trim();
-    if (!clientId) {
-        alert('Please enter a Client ID');
-        return;
-    }
-    
-    await api.put('/api/config', { client_id: clientId });
-    elements.twitchLoginBtn.disabled = false;
-    alert('Client ID saved! You can now login with Twitch.');
-}
+
 
 async function logout() {
     await api.post('/api/logout', {});
@@ -317,24 +318,53 @@ function renderChannels(channels) {
         return;
     }
 
-    // Channels tab - with actions
-    const channelsHtml = channels.map(ch => `
+    // Channels tab - with actions (no reconnect since bot auto-joins when live)
+    const channelsHtml = channels.map(ch => {
+        const profileImg = ch.profile_image_url 
+            ? `<img src="${ch.profile_image_url}" class="channel-avatar" alt="${ch.channel}">` 
+            : `<span class="channel-avatar-placeholder"></span>`;
+        const interval = ch.message_interval || 35;
+        return `
         <div class="list-item">
             <div class="info">
                 <div class="name">
-                    <span class="status-dot ${ch.connected ? 'connected' : 'disconnected'}"></span>
+                    ${profileImg}
                     <a href="https://twitch.tv/${ch.channel}" target="_blank" class="channel-link">${ch.channel}</a>
                 </div>
-                <div class="stats">${ch.messages.toLocaleString()} messages</div>
+                <div class="stats">${ch.messages.toLocaleString()} messages${!ch.connected ? ' • offline' : ''}</div>
+            </div>
+            <div class="channel-interval">
+                <span class="interval-value">${interval}</span>
+                <input type="range" min="1" max="100" value="${interval}" 
+                    onchange="updateChannelInterval('${ch.channel}', this.value)" 
+                    oninput="this.previousElementSibling.textContent = this.value"
+                    onclick="event.stopPropagation()">
             </div>
             <div class="actions">
-                ${!ch.connected ? `<button class="btn warning" onclick="reconnectChannel('${ch.channel}')">Reconnect</button>` : ''}
-                <button class="btn danger" onclick="removeChannel('${ch.channel}')">Leave</button>
+                <button class="btn danger" onclick="removeChannel('${ch.channel}')">Remove</button>
             </div>
         </div>
-    `).join('');
+    `}).join('');
 
     elements.channelsList.innerHTML = channelsHtml;
+}
+
+async function updateChannelInterval(channel, interval) {
+    const num = parseInt(interval);
+    if (isNaN(num) || num < 1 || num > 100) {
+        showToast('Interval must be between 1 and 100', 'error');
+        return;
+    }
+    try {
+        await fetch(`/api/channels/${channel}/interval`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ interval: num })
+        });
+        showToast(`${channel} interval set to ${num}`, 'success');
+    } catch (err) {
+        showToast('Failed to update interval', 'error');
+    }
 }
 
 function renderLiveChannels(liveChannels) {
@@ -347,6 +377,10 @@ function renderLiveChannels(liveChannels) {
         const countdown = ch.messages_until || 0;
         const interval = ch.message_interval || 1;
         const percentage = Math.round(((interval - countdown) / interval) * 100);
+        const lastMsg = ch.last_message || '';
+        const profileImg = ch.profile_image_url 
+            ? `<img src="${ch.profile_image_url}" class="channel-avatar-large" alt="${ch.channel}">` 
+            : `<span class="channel-avatar-placeholder-large"></span>`;
         
         return `
         <div class="list-item live-channel-item" onclick="window.open('https://twitch.tv/${ch.channel}', '_blank')">
@@ -354,9 +388,9 @@ function renderLiveChannels(liveChannels) {
                 <div class="countdown-number">${countdown}</div>
                 <div class="countdown-label">msgs</div>
             </div>
+            ${profileImg}
             <div class="info">
                 <div class="name">
-                    <span class="status-dot connected"></span>
                     ${ch.channel}
                 </div>
                 <div class="stats">
@@ -366,6 +400,7 @@ function renderLiveChannels(liveChannels) {
                 <div class="countdown-bar">
                     <div class="countdown-progress" style="width: ${percentage}%"></div>
                 </div>
+                ${lastMsg ? `<div class="last-bot-message">🤖 ${escapeHtml(lastMsg)}</div>` : ''}
             </div>
         </div>
     `}).join('');
@@ -591,11 +626,13 @@ async function loadTransitions() {
 function renderTransitions(result) {
     document.getElementById('editor-showing').textContent = result.transitions.length;
     document.getElementById('editor-total').textContent = result.total.toLocaleString();
-    document.getElementById('current-page').textContent = editorState.page;
     
-    const maxPages = Math.ceil(result.total / editorState.pageSize);
+    const maxPages = Math.ceil(result.total / editorState.pageSize) || 1;
     document.getElementById('prev-page-btn').disabled = editorState.page <= 1;
     document.getElementById('next-page-btn').disabled = editorState.page >= maxPages;
+    
+    // Render page numbers
+    renderPageNumbers(maxPages);
     
     const list = document.getElementById('transitions-list');
     
@@ -624,10 +661,56 @@ function renderTransitions(result) {
     `;
 }
 
-function searchTransitions() {
-    editorState.search = document.getElementById('transition-search').value.trim();
-    editorState.page = 1;
+function renderPageNumbers(maxPages) {
+    const container = document.getElementById('page-numbers');
+    const current = editorState.page;
+    let html = '';
+    
+    // Determine which pages to show
+    let pages = [];
+    if (maxPages <= 7) {
+        // Show all pages if 7 or fewer
+        for (let i = 1; i <= maxPages; i++) pages.push(i);
+    } else {
+        // Always show first, last, and pages around current
+        pages.push(1);
+        
+        if (current > 3) pages.push('...');
+        
+        for (let i = Math.max(2, current - 1); i <= Math.min(maxPages - 1, current + 1); i++) {
+            pages.push(i);
+        }
+        
+        if (current < maxPages - 2) pages.push('...');
+        
+        pages.push(maxPages);
+    }
+    
+    html = pages.map(p => {
+        if (p === '...') {
+            return '<span class="page-ellipsis">...</span>';
+        }
+        const activeClass = p === current ? 'active' : '';
+        return `<button class="page-num ${activeClass}" onclick="goToPage(${p})">${p}</button>`;
+    }).join('');
+    
+    container.innerHTML = html;
+}
+
+function goToPage(page) {
+    editorState.page = page;
     loadTransitions();
+}
+
+// Debounced search for live filtering
+let searchTimeout = null;
+function debouncedSearch() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        editorState.search = document.getElementById('transition-search').value.trim();
+        editorState.page = 1;
+        loadTransitions();
+    }, 300);
 }
 
 function prevPage() {

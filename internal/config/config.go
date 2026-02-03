@@ -168,6 +168,31 @@ func (c *Config) GetChannelStats(channel string) (messageCount int64, enabled bo
 	return
 }
 
+// GetChannelMessageInterval returns the per-channel message interval (0 means use global default)
+func (c *Config) GetChannelMessageInterval(channel string) int {
+	db := database.GetDB()
+	var interval int
+	err := db.QueryRow("SELECT message_interval FROM channels WHERE name = ?", strings.ToLower(channel)).Scan(&interval)
+	if err != nil || interval == 0 {
+		return c.GetMessageInterval() // Fall back to global default
+	}
+	return interval
+}
+
+// SetChannelMessageInterval sets the per-channel message interval (1-100)
+func (c *Config) SetChannelMessageInterval(channel string, interval int) error {
+	// Clamp to valid range
+	if interval < 1 {
+		interval = 1
+	}
+	if interval > 100 {
+		interval = 100
+	}
+	db := database.GetDB()
+	_, err := db.Exec("UPDATE channels SET message_interval = ? WHERE name = ?", interval, strings.ToLower(channel))
+	return err
+}
+
 // Blacklist operations
 
 // GetBlacklistedWords returns all blacklisted words
@@ -259,4 +284,43 @@ func (c *Config) IsBlacklistedUser(username string) bool {
 	var count int
 	db.QueryRow("SELECT COUNT(*) FROM user_blacklist WHERE username = ?", strings.ToLower(username)).Scan(&count)
 	return count > 0
+}
+
+// Twitch User ID Tracking
+
+// GetUsernameByID returns the stored username for a Twitch user ID
+func (c *Config) GetUsernameByID(twitchID string) string {
+	db := database.GetDB()
+	var username string
+	db.QueryRow("SELECT username FROM twitch_users WHERE twitch_id = ?", twitchID).Scan(&username)
+	return username
+}
+
+// SetUserIDMapping stores or updates a Twitch user ID to username mapping
+func (c *Config) SetUserIDMapping(twitchID, username string) error {
+	db := database.GetDB()
+	_, err := db.Exec(`
+		INSERT INTO twitch_users (twitch_id, username, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(twitch_id) DO UPDATE SET username = ?, updated_at = CURRENT_TIMESTAMP
+	`, twitchID, strings.ToLower(username), strings.ToLower(username))
+	return err
+}
+
+// GetUserIDByUsername returns the Twitch ID for a username (if we have it)
+func (c *Config) GetUserIDByUsername(username string) string {
+	db := database.GetDB()
+	var twitchID string
+	db.QueryRow("SELECT twitch_id FROM twitch_users WHERE username = ?", strings.ToLower(username)).Scan(&twitchID)
+	return twitchID
+}
+
+// RenameChannel updates all references when a username changes
+func (c *Config) RenameChannel(oldName, newName string) error {
+	db := database.GetDB()
+	oldName = strings.ToLower(oldName)
+	newName = strings.ToLower(newName)
+
+	// Update channels table
+	_, err := db.Exec("UPDATE channels SET name = ? WHERE name = ?", newName, oldName)
+	return err
 }

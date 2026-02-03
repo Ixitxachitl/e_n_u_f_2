@@ -1,13 +1,19 @@
 package twitch
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"twitchbot/internal/config"
+	"twitchbot/internal/database"
 	"twitchbot/internal/markov"
 )
 
@@ -27,6 +33,7 @@ type Manager struct {
 	mu           sync.RWMutex
 	running      bool
 	eventHandler func(event string, data interface{})
+	stopChan     chan struct{}
 }
 
 // NewManager creates a new Twitch connection manager
@@ -36,6 +43,7 @@ func NewManager(cfg *config.Config) *Manager {
 		brainMgr:  markov.NewManager(cfg),
 		clients:   make(map[string]*Client),
 		msgCounts: make(map[string]int64),
+		stopChan:  make(chan struct{}),
 	}
 }
 
@@ -51,21 +59,13 @@ func (m *Manager) Start() error {
 		if err := m.JoinChannel(botUsername); err != nil {
 			log.Printf("Failed to join bot's own channel %s: %v", botUsername, err)
 		}
-		time.Sleep(500 * time.Millisecond)
 	}
 
-	channels := m.cfg.GetChannels()
-	for _, channel := range channels {
-		// Skip if it's the bot's own channel (already joined)
-		if strings.EqualFold(channel, botUsername) {
-			continue
-		}
-		if err := m.JoinChannel(channel); err != nil {
-			log.Printf("Failed to join channel %s: %v", channel, err)
-		}
-		// Small delay between connections to avoid rate limiting
-		time.Sleep(500 * time.Millisecond)
-	}
+	// Start the live channel monitor (checks every 60 seconds)
+	go m.monitorLiveChannels()
+
+	// Do an immediate check for live channels
+	m.updateLiveConnections()
 
 	return nil
 }
@@ -74,6 +74,7 @@ func (m *Manager) Start() error {
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	m.running = false
+	close(m.stopChan)
 	clients := make([]*Client, 0, len(m.clients))
 	for _, client := range m.clients {
 		clients = append(clients, client)
@@ -90,6 +91,11 @@ func (m *Manager) JoinChannel(channel string) error {
 	channel = strings.ToLower(channel)
 	botUsername := strings.ToLower(m.cfg.GetBotUsername())
 	isBotChannel := channel == botUsername
+
+	// Check for username changes via Twitch API (for non-bot channels)
+	if !isBotChannel {
+		channel = m.checkAndHandleUsernameChange(channel)
+	}
 
 	m.mu.Lock()
 
@@ -153,23 +159,35 @@ func (m *Manager) LeaveChannel(channel string) {
 	}
 }
 
-// GetChannelStatus returns status for all connected channels (excluding bot's own channel)
+// GetChannelStatus returns status for all configured channels (excluding bot's own channel)
 func (m *Manager) GetChannelStatus() []ChannelStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	botUsername := strings.ToLower(m.cfg.GetBotUsername())
-	status := make([]ChannelStatus, 0, len(m.clients))
-	for channel, client := range m.clients {
+
+	// Get all configured channels from database
+	configuredChannels := m.cfg.GetChannels()
+	status := make([]ChannelStatus, 0, len(configuredChannels))
+
+	for _, channel := range configuredChannels {
+		channel = strings.ToLower(channel)
 		// Skip bot's own channel
 		if channel == botUsername {
 			continue
 		}
+
+		// Check if currently connected
+		connected := false
+		if client, exists := m.clients[channel]; exists {
+			connected = client.IsConnected()
+		}
+
 		// Get persistent message count from database
 		msgCount, _, _ := m.cfg.GetChannelStats(channel)
 		status = append(status, ChannelStatus{
 			Channel:   channel,
-			Connected: client.IsConnected(),
+			Connected: connected,
 			Messages:  msgCount,
 		})
 	}
@@ -319,6 +337,270 @@ func (m *Manager) onCommand(channel, username, command string) {
 		log.Printf("Left channel %s via !leave command from %s", userChannel, username)
 		if botClient != nil {
 			botClient.SendMessage(fmt.Sprintf("@%s I've left your channel. Goodbye! 👋", username))
+		}
+	}
+}
+
+// checkAndHandleUsernameChange looks up the Twitch user ID and handles username changes
+func (m *Manager) checkAndHandleUsernameChange(channel string) string {
+	clientID := m.cfg.GetClientID()
+	oauthToken := m.cfg.GetOAuthToken()
+	if clientID == "" || oauthToken == "" {
+		return channel
+	}
+
+	// Look up user info from Twitch API
+	userID, currentUsername := m.lookupTwitchUser(channel, clientID, oauthToken)
+	if userID == "" {
+		return channel
+	}
+
+	// Check if we have a stored username for this ID
+	storedUsername := m.cfg.GetUsernameByID(userID)
+
+	if storedUsername == "" {
+		// First time seeing this user, just store the mapping
+		m.cfg.SetUserIDMapping(userID, currentUsername)
+		log.Printf("Stored new user mapping: %s -> %s", userID, currentUsername)
+		return currentUsername
+	}
+
+	if storedUsername != currentUsername {
+		// Username changed! Handle the rename
+		log.Printf("Username change detected: %s -> %s (ID: %s)", storedUsername, currentUsername, userID)
+		m.handleUsernameChange(storedUsername, currentUsername, userID)
+		return currentUsername
+	}
+
+	return currentUsername
+}
+
+// lookupTwitchUser queries the Twitch API for user info
+func (m *Manager) lookupTwitchUser(username, clientID, oauthToken string) (userID, currentUsername string) {
+	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users?login="+strings.ToLower(username), nil)
+	if err != nil {
+		return "", ""
+	}
+
+	token := strings.TrimPrefix(oauthToken, "oauth:")
+
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error looking up Twitch user %s: %v", username, err)
+		return "", ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Twitch API error looking up %s: %d - %s", username, resp.StatusCode, string(body))
+		return "", ""
+	}
+
+	var apiResp struct {
+		Data []struct {
+			ID    string `json:"id"`
+			Login string `json:"login"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return "", ""
+	}
+
+	if len(apiResp.Data) == 0 {
+		return "", ""
+	}
+
+	return apiResp.Data[0].ID, strings.ToLower(apiResp.Data[0].Login)
+}
+
+// handleUsernameChange renames brain files and updates database references
+func (m *Manager) handleUsernameChange(oldName, newName, userID string) {
+	oldName = strings.ToLower(oldName)
+	newName = strings.ToLower(newName)
+
+	// Remove old brain from memory if loaded
+	m.brainMgr.RemoveBrain(oldName)
+
+	// Rename brain database file
+	brainsDir := filepath.Join(database.GetDataDir(), "brains")
+	oldPath := filepath.Join(brainsDir, oldName+".db")
+	newPath := filepath.Join(brainsDir, newName+".db")
+
+	// Also handle WAL and SHM files
+	filesToRename := []struct{ old, new string }{
+		{oldPath, newPath},
+		{oldPath + "-wal", newPath + "-wal"},
+		{oldPath + "-shm", newPath + "-shm"},
+	}
+
+	for _, f := range filesToRename {
+		if _, err := os.Stat(f.old); err == nil {
+			if err := os.Rename(f.old, f.new); err != nil {
+				log.Printf("Error renaming %s to %s: %v", f.old, f.new, err)
+			} else {
+				log.Printf("Renamed brain file: %s -> %s", f.old, f.new)
+			}
+		}
+	}
+
+	// Update channel name in database
+	m.cfg.RenameChannel(oldName, newName)
+
+	// Update the user ID mapping
+	m.cfg.SetUserIDMapping(userID, newName)
+
+	log.Printf("Successfully migrated channel data from %s to %s", oldName, newName)
+}
+
+// monitorLiveChannels periodically checks which channels are live and joins/leaves accordingly
+func (m *Manager) monitorLiveChannels() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopChan:
+			return
+		case <-ticker.C:
+			m.updateLiveConnections()
+		}
+	}
+}
+
+// updateLiveConnections joins live channels and leaves offline channels
+func (m *Manager) updateLiveConnections() {
+	clientID := m.cfg.GetClientID()
+	oauthToken := m.cfg.GetOAuthToken()
+	if clientID == "" || oauthToken == "" {
+		return
+	}
+
+	botUsername := strings.ToLower(m.cfg.GetBotUsername())
+	channels := m.cfg.GetChannels()
+
+	if len(channels) == 0 {
+		return
+	}
+
+	// Query Twitch API for live status
+	liveChannels := m.getLiveChannelSet(channels, clientID, oauthToken)
+
+	// Get currently connected channels (excluding bot's own channel)
+	m.mu.RLock()
+	connectedChannels := make(map[string]bool)
+	for ch := range m.clients {
+		if ch != botUsername {
+			connectedChannels[ch] = true
+		}
+	}
+	m.mu.RUnlock()
+
+	// Join channels that are live but not connected
+	for _, channel := range channels {
+		ch := strings.ToLower(channel)
+		if ch == botUsername {
+			continue
+		}
+
+		isLive := liveChannels[ch]
+		isConnected := connectedChannels[ch]
+
+		if isLive && !isConnected {
+			log.Printf("Channel %s is now live, joining...", ch)
+			if err := m.JoinChannel(ch); err != nil {
+				log.Printf("Failed to join live channel %s: %v", ch, err)
+			}
+			time.Sleep(500 * time.Millisecond) // Rate limit
+		} else if !isLive && isConnected {
+			log.Printf("Channel %s is now offline, leaving...", ch)
+			m.leaveChannelQuietly(ch)
+			time.Sleep(500 * time.Millisecond) // Rate limit
+		}
+	}
+}
+
+// getLiveChannelSet returns a set of channel names that are currently live
+func (m *Manager) getLiveChannelSet(channels []string, clientID, oauthToken string) map[string]bool {
+	result := make(map[string]bool)
+	if len(channels) == 0 {
+		return result
+	}
+
+	// Build query params (max 100 per request)
+	params := "?"
+	for i, ch := range channels {
+		if i > 0 {
+			params += "&"
+		}
+		params += "user_login=" + strings.ToLower(ch)
+	}
+
+	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams"+params, nil)
+	if err != nil {
+		return result
+	}
+
+	token := strings.TrimPrefix(oauthToken, "oauth:")
+
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error checking live channels: %v", err)
+		return result
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return result
+	}
+
+	var apiResp struct {
+		Data []struct {
+			UserLogin string `json:"user_login"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return result
+	}
+
+	for _, stream := range apiResp.Data {
+		result[strings.ToLower(stream.UserLogin)] = true
+	}
+
+	return result
+}
+
+// leaveChannelQuietly disconnects from a channel without removing it from config
+func (m *Manager) leaveChannelQuietly(channel string) {
+	m.mu.Lock()
+	client, exists := m.clients[channel]
+	if exists {
+		delete(m.clients, channel)
+		delete(m.msgCounts, channel)
+	}
+	m.mu.Unlock()
+
+	if exists {
+		client.Disconnect()
+		log.Printf("Left offline channel: %s", channel)
+
+		// Broadcast disconnect event
+		m.mu.RLock()
+		handler := m.eventHandler
+		m.mu.RUnlock()
+
+		if handler != nil {
+			handler("disconnect", map[string]string{"channel": channel})
 		}
 	}
 }

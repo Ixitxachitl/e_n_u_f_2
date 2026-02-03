@@ -93,8 +93,9 @@ func (s *Server) Start() error {
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", s.cfg.GetWebPort()),
-		Handler: mux,
+		Addr:     fmt.Sprintf(":%d", s.cfg.GetWebPort()),
+		Handler:  mux,
+		ErrorLog: log.New(&tlsErrorFilter{}, "", 0),
 	}
 
 	// Try HTTPS first, fall back to HTTP
@@ -109,6 +110,23 @@ func (s *Server) Start() error {
 
 	log.Printf("Starting HTTPS server on port %d", s.cfg.GetWebPort())
 	return s.server.ListenAndServeTLS(certFile, keyFile)
+}
+
+// tlsErrorFilter filters out expected TLS handshake errors from self-signed certs
+type tlsErrorFilter struct{}
+
+func (f *tlsErrorFilter) Write(p []byte) (n int, err error) {
+	msg := string(p)
+	// Suppress expected TLS errors from browsers rejecting self-signed certs
+	if strings.Contains(msg, "TLS handshake error") &&
+		(strings.Contains(msg, "unknown certificate") ||
+			strings.Contains(msg, "EOF") ||
+			strings.Contains(msg, "certificate required")) {
+		return len(p), nil
+	}
+	// Pass through other errors
+	log.Print(msg)
+	return len(p), nil
 }
 
 func (s *Server) getCertPaths() (string, string) {
@@ -369,12 +387,22 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// Don't expose full token, just show if it's set
 		tokenSet := s.cfg.GetOAuthToken() != ""
 		clientIDSet := s.cfg.GetClientID() != ""
+
+		// Get bot's profile image
+		botUsername := s.cfg.GetBotUsername()
+		var botProfileImage string
+		if botUsername != "" && clientIDSet && tokenSet {
+			profiles := s.getUserProfiles([]string{botUsername}, s.cfg.GetClientID(), s.cfg.GetOAuthToken())
+			botProfileImage = profiles[strings.ToLower(botUsername)]
+		}
+
 		config := map[string]interface{}{
-			"bot_username":     s.cfg.GetBotUsername(),
-			"oauth_token_set":  tokenSet,
-			"client_id_set":    clientIDSet,
-			"message_interval": s.cfg.GetMessageInterval(),
-			"web_port":         s.cfg.GetWebPort(),
+			"bot_username":      s.cfg.GetBotUsername(),
+			"oauth_token_set":   tokenSet,
+			"client_id_set":     clientIDSet,
+			"message_interval":  s.cfg.GetMessageInterval(),
+			"web_port":          s.cfg.GetWebPort(),
+			"bot_profile_image": botProfileImage,
 		}
 		jsonResponse(w, config)
 
@@ -405,7 +433,32 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		jsonResponse(w, s.manager.GetChannelStatus())
+		channels := s.manager.GetChannelStatus()
+
+		// Get profile images for all channels
+		clientID := s.cfg.GetClientID()
+		oauthToken := s.cfg.GetOAuthToken()
+		profileImages := make(map[string]string)
+		if clientID != "" && oauthToken != "" {
+			channelNames := make([]string, len(channels))
+			for i, ch := range channels {
+				channelNames[i] = ch.Channel
+			}
+			profileImages = s.getUserProfiles(channelNames, clientID, oauthToken)
+		}
+
+		// Build response with profile images
+		result := make([]map[string]interface{}, len(channels))
+		for i, ch := range channels {
+			result[i] = map[string]interface{}{
+				"channel":           ch.Channel,
+				"connected":         ch.Connected,
+				"messages":          ch.Messages,
+				"profile_image_url": profileImages[strings.ToLower(ch.Channel)],
+				"message_interval":  s.cfg.GetChannelMessageInterval(ch.Channel),
+			}
+		}
+		jsonResponse(w, result)
 
 	case http.MethodPost:
 		var req struct {
@@ -449,6 +502,29 @@ func (s *Server) handleChannelAction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			jsonResponse(w, map[string]string{"status": "reconnected", "channel": channel})
+			return
+		}
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check for /interval suffix
+	if strings.HasSuffix(channel, "/interval") {
+		channel = strings.TrimSuffix(channel, "/interval")
+		if r.Method == http.MethodPut {
+			var req struct {
+				Interval int `json:"interval"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				httpError(w, "Invalid request", http.StatusBadRequest)
+				return
+			}
+			if req.Interval < 1 || req.Interval > 100 {
+				httpError(w, "Interval must be between 1 and 100", http.StatusBadRequest)
+				return
+			}
+			s.cfg.SetChannelMessageInterval(channel, req.Interval)
+			jsonResponse(w, map[string]interface{}{"status": "updated", "channel": channel, "interval": req.Interval})
 			return
 		}
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -506,14 +582,17 @@ func (s *Server) handleLiveChannels(w http.ResponseWriter, r *http.Request) {
 	for _, ch := range channels {
 		if stream, isLive := liveStreams[strings.ToLower(ch.Channel)]; isLive {
 			countdown, interval := brainMgr.GetChannelCountdown(ch.Channel)
+			lastMsg := brainMgr.GetLastMessage(ch.Channel)
 			result = append(result, map[string]interface{}{
-				"channel":          ch.Channel,
-				"title":            stream.Title,
-				"game":             stream.GameName,
-				"viewers":          stream.ViewerCount,
-				"started_at":       stream.StartedAt,
-				"messages_until":   countdown,
-				"message_interval": interval,
+				"channel":           ch.Channel,
+				"title":             stream.Title,
+				"game":              stream.GameName,
+				"viewers":           stream.ViewerCount,
+				"started_at":        stream.StartedAt,
+				"messages_until":    countdown,
+				"message_interval":  interval,
+				"last_message":      lastMsg,
+				"profile_image_url": stream.ProfileImageURL,
 			})
 		}
 	}
@@ -522,10 +601,11 @@ func (s *Server) handleLiveChannels(w http.ResponseWriter, r *http.Request) {
 }
 
 type twitchStream struct {
-	Title       string `json:"title"`
-	GameName    string `json:"game_name"`
-	ViewerCount int    `json:"viewer_count"`
-	StartedAt   string `json:"started_at"`
+	Title           string `json:"title"`
+	GameName        string `json:"game_name"`
+	ViewerCount     int    `json:"viewer_count"`
+	StartedAt       string `json:"started_at"`
+	ProfileImageURL string `json:"profile_image_url"`
 }
 
 func (s *Server) getLiveStreams(channels []string, clientID, oauthToken string) map[string]twitchStream {
@@ -550,10 +630,7 @@ func (s *Server) getLiveStreams(channels []string, clientID, oauthToken string) 
 	}
 
 	// Remove "oauth:" prefix if present
-	token := oauthToken
-	if strings.HasPrefix(token, "oauth:") {
-		token = strings.TrimPrefix(token, "oauth:")
-	}
+	token := strings.TrimPrefix(oauthToken, "oauth:")
 
 	req.Header.Set("Client-ID", clientID)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -594,6 +671,73 @@ func (s *Server) getLiveStreams(channels []string, clientID, oauthToken string) 
 			ViewerCount: stream.ViewerCount,
 			StartedAt:   stream.StartedAt,
 		}
+	}
+
+	// Fetch profile images for live channels
+	if len(result) > 0 {
+		liveChannels := make([]string, 0, len(result))
+		for ch := range result {
+			liveChannels = append(liveChannels, ch)
+		}
+		profileImages := s.getUserProfiles(liveChannels, clientID, oauthToken)
+		for ch, stream := range result {
+			stream.ProfileImageURL = profileImages[ch]
+			result[ch] = stream
+		}
+	}
+
+	return result
+}
+
+// getUserProfiles fetches profile images for a list of usernames
+func (s *Server) getUserProfiles(usernames []string, clientID, oauthToken string) map[string]string {
+	result := make(map[string]string)
+	if len(usernames) == 0 {
+		return result
+	}
+
+	// Build query params
+	params := "?"
+	for i, username := range usernames {
+		if i > 0 {
+			params += "&"
+		}
+		params += "login=" + strings.ToLower(username)
+	}
+
+	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users"+params, nil)
+	if err != nil {
+		return result
+	}
+
+	token := strings.TrimPrefix(oauthToken, "oauth:")
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return result
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return result
+	}
+
+	var apiResp struct {
+		Data []struct {
+			Login           string `json:"login"`
+			ProfileImageURL string `json:"profile_image_url"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return result
+	}
+
+	for _, user := range apiResp.Data {
+		result[strings.ToLower(user.Login)] = user.ProfileImageURL
 	}
 
 	return result
