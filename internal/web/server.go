@@ -561,6 +561,7 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 				"profile_image_url": profileImages[strings.ToLower(ch.Channel)],
 				"message_interval":  s.cfg.GetChannelMessageInterval(ch.Channel),
 				"user_id":           s.cfg.GetUserIDByUsername(ch.Channel),
+				"use_global":        s.cfg.GetChannelUseGlobalBrain(ch.Channel),
 			}
 		}
 		jsonResponse(w, result)
@@ -630,6 +631,25 @@ func (s *Server) handleChannelAction(w http.ResponseWriter, r *http.Request) {
 			}
 			s.cfg.SetChannelMessageInterval(channel, req.Interval)
 			jsonResponse(w, map[string]interface{}{"status": "updated", "channel": channel, "interval": req.Interval})
+			return
+		}
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check for /global suffix (toggle global brain generation)
+	if strings.HasSuffix(channel, "/global") {
+		channel = strings.TrimSuffix(channel, "/global")
+		if r.Method == http.MethodPut {
+			var req struct {
+				UseGlobal bool `json:"use_global"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				httpError(w, "Invalid request", http.StatusBadRequest)
+				return
+			}
+			s.cfg.SetChannelUseGlobalBrain(channel, req.UseGlobal)
+			jsonResponse(w, map[string]interface{}{"status": "updated", "channel": channel, "use_global": req.UseGlobal})
 			return
 		}
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)

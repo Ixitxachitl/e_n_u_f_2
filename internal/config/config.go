@@ -212,6 +212,28 @@ func (c *Config) SetChannelMessageInterval(channel string, interval int) error {
 	return err
 }
 
+// GetChannelUseGlobalBrain returns whether a channel uses all brains for generation
+func (c *Config) GetChannelUseGlobalBrain(channel string) bool {
+	db := database.GetDB()
+	var useGlobal int
+	err := db.QueryRow("SELECT use_global_brain FROM channels WHERE name = ?", strings.ToLower(channel)).Scan(&useGlobal)
+	if err != nil {
+		return false
+	}
+	return useGlobal == 1
+}
+
+// SetChannelUseGlobalBrain sets whether a channel uses all brains for generation
+func (c *Config) SetChannelUseGlobalBrain(channel string, useGlobal bool) error {
+	db := database.GetDB()
+	val := 0
+	if useGlobal {
+		val = 1
+	}
+	_, err := db.Exec("UPDATE channels SET use_global_brain = ? WHERE name = ?", val, strings.ToLower(channel))
+	return err
+}
+
 // Blacklist operations
 
 // GetBlacklistedWords returns all blacklisted words

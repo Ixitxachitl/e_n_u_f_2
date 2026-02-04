@@ -120,6 +120,9 @@ func (m *Manager) JoinChannel(channel string) error {
 		m.onBanned,
 	)
 
+	// Set global generator for combined brain generation
+	client.SetGlobalGenerator(m.brainMgr.GenerateGlobal)
+
 	m.clients[channel] = client
 	m.msgCounts[channel] = 0
 	m.mu.Unlock()

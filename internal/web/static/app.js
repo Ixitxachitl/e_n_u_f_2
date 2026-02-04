@@ -777,6 +777,7 @@ function renderChannels(channels) {
             : `<span class="channel-avatar-placeholder"></span>`;
         const interval = ch.message_interval || 35;
         const userIdText = ch.user_id ? `ID: ${ch.user_id}` : 'ID: pending';
+        const useGlobal = ch.use_global || false;
         return `
         <div class="list-item">
             <div class="info">
@@ -792,6 +793,14 @@ function renderChannels(channels) {
                     onchange="updateChannelInterval('${ch.channel}', this.value)" 
                     oninput="this.previousElementSibling.textContent = this.value"
                     onclick="event.stopPropagation()">
+            </div>
+            <div class="channel-brain-toggle">
+                <label class="toggle-label small" title="Global: Use all brains for generation&#10;Local: Use only this channel's brain&#10;(Learning always uses this channel's brain)">
+                    <input type="checkbox" ${useGlobal ? 'checked' : ''} 
+                        onchange="toggleGlobalBrain('${ch.channel}', this.checked)"
+                        data-channel="${ch.channel}">
+                    <span>${useGlobal ? 'Global' : 'Local'}</span>
+                </label>
             </div>
             <div class="actions">
                 <button class="btn danger" onclick="removeChannel('${ch.channel}')">Remove</button>
@@ -843,6 +852,30 @@ async function updateChannelInterval(channel, interval) {
         showToast(`${channel} interval set to ${num}`, 'success');
     } catch (err) {
         showToast('Failed to update interval', 'error');
+    }
+}
+
+async function toggleGlobalBrain(channel, useGlobal) {
+    try {
+        await fetch(`/api/channels/${channel}/global`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ use_global: useGlobal })
+        });
+        
+        // Update the label text
+        const checkbox = document.querySelector(`input[data-channel="${channel}"]`);
+        if (checkbox) {
+            const label = checkbox.nextElementSibling;
+            if (label) {
+                label.textContent = useGlobal ? 'Global' : 'Local';
+            }
+        }
+        
+        const mode = useGlobal ? 'global (all brains)' : 'local (channel only)';
+        showToast(`${channel} now uses ${mode} for generation`, 'success');
+    } catch (err) {
+        showToast('Failed to update brain mode', 'error');
     }
 }
 

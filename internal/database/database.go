@@ -129,6 +129,9 @@ func createTables() error {
 	// Migration: add message_interval column if it doesn't exist
 	db.Exec("ALTER TABLE channels ADD COLUMN message_interval INTEGER DEFAULT 0")
 
+	// Migration: add use_global_brain column if it doesn't exist
+	db.Exec("ALTER TABLE channels ADD COLUMN use_global_brain INTEGER DEFAULT 0")
+
 	// Insert default config values if not exists
 	defaults := map[string]string{
 		"client_id":        "",

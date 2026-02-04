@@ -752,6 +752,57 @@ input[type="password"]::placeholder {
     background: var(--accent-hover);
 }
 
+.channel-brain-toggle {
+    display: flex;
+    align-items: center;
+    min-width: 90px;
+}
+
+.channel-brain-toggle .toggle-label.small {
+    font-size: 0.75rem;
+    gap: 6px;
+    color: var(--text-secondary);
+}
+
+.channel-brain-toggle .toggle-label.small input[type="checkbox"] {
+    width: 36px;
+    height: 20px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.channel-brain-toggle .toggle-label.small input[type="checkbox"]::before {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: var(--text-secondary);
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.channel-brain-toggle .toggle-label.small input[type="checkbox"]:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.channel-brain-toggle .toggle-label.small input[type="checkbox"]:checked::before {
+    transform: translateX(16px);
+    background: white;
+}
+
+.channel-brain-toggle .toggle-label.small span {
+    min-width: 38px;
+}
+
 .list-item .actions {
     display: flex;
     gap: 8px;

@@ -141,6 +141,8 @@ All configuration is done via the Web UI at `https://localhost:24601`.
 | `!leave` | Bot's channel | Remove bot from your channel |
 | `!response` | Bot's channel | Show current message interval for your channel |
 | `!response <1-100>` | Bot's channel | Set message interval for your channel |
+| `!global` | Bot's channel | Use all channel brains for generating responses |
+| `!local` | Bot's channel | Use only your channel's brain for generating (default) |
 | `!ignoreme` | Any channel | Opt-out of bot learning from your messages |
 | `!listentome` | Any channel | Opt back in to bot learning |
 

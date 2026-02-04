@@ -106,7 +106,8 @@ func (b *Brain) Close() error {
 }
 
 // ProcessMessage learns from a message and optionally generates a response
-func (b *Brain) ProcessMessage(message, username, botUsername string) string {
+// If globalGenerator is provided, it will be used instead of the local Generate function
+func (b *Brain) ProcessMessage(message, username, botUsername string, globalGenerator func(int) string) string {
 	// Skip commands
 	if strings.HasPrefix(message, "!") {
 		return ""
@@ -142,7 +143,7 @@ func (b *Brain) ProcessMessage(message, username, botUsername string) string {
 		return ""
 	}
 
-	// Learn from the message
+	// Learn from the message (always local)
 	b.learn(message)
 
 	// Increment message count
@@ -161,9 +162,15 @@ func (b *Brain) ProcessMessage(message, username, botUsername string) string {
 	b.mu.Unlock()
 
 	if shouldRespond {
+		// Choose generator based on setting
+		generator := b.Generate
+		if globalGenerator != nil {
+			generator = globalGenerator
+		}
+
 		// Try up to 5 times to generate a clean response
 		for i := 0; i < 5; i++ {
-			response := b.Generate(20)
+			response := generator(20)
 			if response != "" && !b.containsBlacklistedWord(response) {
 				b.saveLastMessage(response)
 				return response
@@ -519,10 +526,25 @@ func (b *Brain) UpdateTransitionCount(word1, word2, nextWord string, count int) 
 }
 
 func (b *Brain) containsBlacklistedWord(message string) bool {
-	words := strings.Fields(strings.ToLower(message))
-	for _, word := range words {
-		if b.cfg.IsBlacklistedWord(word) {
-			return true
+	lowerMessage := strings.ToLower(message)
+	words := strings.Fields(lowerMessage)
+	blacklist := b.cfg.GetBlacklistedWords()
+
+	for _, blacklisted := range blacklist {
+		blacklisted = strings.ToLower(blacklisted)
+
+		if strings.Contains(blacklisted, " ") {
+			// Phrase (contains space): substring match against full message
+			if strings.Contains(lowerMessage, blacklisted) {
+				return true
+			}
+		} else {
+			// Single word: exact word match
+			for _, word := range words {
+				if word == blacklisted {
+					return true
+				}
+			}
 		}
 	}
 	return false

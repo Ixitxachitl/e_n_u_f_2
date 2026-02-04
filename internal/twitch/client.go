@@ -22,18 +22,19 @@ const (
 
 // Client represents a Twitch IRC client for a single channel
 type Client struct {
-	channel      string
-	cfg          *config.Config
-	brain        *markov.Brain
-	conn         net.Conn
-	writer       *bufio.Writer
-	running      bool
-	mu           sync.Mutex
-	onMessage    func(channel, username, message, color, emotes, badges string)
-	onConnect    func(channel string)
-	onDisconnect func(channel string)
-	onCommand    func(channel, username, command string)
-	onBanned     func(channel string)
+	channel         string
+	cfg             *config.Config
+	brain           *markov.Brain
+	conn            net.Conn
+	writer          *bufio.Writer
+	running         bool
+	mu              sync.Mutex
+	onMessage       func(channel, username, message, color, emotes, badges string)
+	onConnect       func(channel string)
+	onDisconnect    func(channel string)
+	onCommand       func(channel, username, command string)
+	onBanned        func(channel string)
+	globalGenerator func(int) string // Function to generate from all brains
 }
 
 // Message represents a parsed IRC message
@@ -63,6 +64,11 @@ func (c *Client) SetCallbacks(onMessage func(string, string, string, string, str
 	c.onDisconnect = onDisconnect
 	c.onCommand = onCommand
 	c.onBanned = onBanned
+}
+
+// SetGlobalGenerator sets the function to generate from all brains
+func (c *Client) SetGlobalGenerator(gen func(int) string) {
+	c.globalGenerator = gen
 }
 
 // Connect establishes connection to Twitch IRC with retry logic
@@ -258,6 +264,20 @@ func (c *Client) handleMessage(raw string) {
 				}
 				return
 			}
+
+			// !global and !local - toggle between global and local brain for generation
+			if cmd == "!global" {
+				userChannel := strings.ToLower(msg.Username)
+				c.cfg.SetChannelUseGlobalBrain(userChannel, true)
+				c.SendMessage(fmt.Sprintf("@%s I will now use ALL channel brains to generate messages in your channel!", msg.Username))
+				return
+			}
+			if cmd == "!local" {
+				userChannel := strings.ToLower(msg.Username)
+				c.cfg.SetChannelUseGlobalBrain(userChannel, false)
+				c.SendMessage(fmt.Sprintf("@%s I will now use only YOUR channel's brain to generate messages!", msg.Username))
+				return
+			}
 		}
 
 		// !ignoreme and !listentome work in any channel
@@ -274,7 +294,12 @@ func (c *Client) handleMessage(raw string) {
 
 		// Process with brain (if brain exists - bot's own channel has no brain)
 		if c.brain != nil {
-			response := c.brain.ProcessMessage(msg.Content, msg.Username, c.cfg.GetBotUsername())
+			// Check if channel uses global brain for generation
+			var generator func(int) string
+			if c.cfg.GetChannelUseGlobalBrain(c.channel) && c.globalGenerator != nil {
+				generator = c.globalGenerator
+			}
+			response := c.brain.ProcessMessage(msg.Content, msg.Username, c.cfg.GetBotUsername(), generator)
 			if response != "" {
 				c.SendMessage(response)
 			}

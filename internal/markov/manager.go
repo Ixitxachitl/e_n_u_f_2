@@ -218,6 +218,87 @@ func (m *Manager) Close() {
 	m.brains = make(map[string]*Brain)
 }
 
+// GenerateGlobal generates a response using transitions from all loaded brains
+func (m *Manager) GenerateGlobal(maxWords int) string {
+	m.mu.RLock()
+	brains := make([]*Brain, 0, len(m.brains))
+	for _, brain := range m.brains {
+		brains = append(brains, brain)
+	}
+	m.mu.RUnlock()
+
+	if len(brains) == 0 {
+		return ""
+	}
+
+	// Pick a random brain to start from
+	startBrain := brains[brains[0].rng.Intn(len(brains))]
+
+	// Get a random starting pair from the starting brain
+	var word1, word2 string
+	err := startBrain.db.QueryRow(`
+		SELECT word1, word2 FROM transitions 
+		ORDER BY RANDOM() LIMIT 1
+	`).Scan(&word1, &word2)
+
+	if err != nil {
+		return ""
+	}
+
+	result := []string{word1, word2}
+
+	for i := 0; i < maxWords; i++ {
+		// Collect candidates from all brains
+		var allCandidates []string
+		var allWeights []int
+		totalWeight := 0
+
+		for _, brain := range brains {
+			rows, err := brain.db.Query(`
+				SELECT next_word, count FROM transitions
+				WHERE word1 = ? AND word2 = ?
+			`, word1, word2)
+
+			if err != nil {
+				continue
+			}
+
+			for rows.Next() {
+				var nextWord string
+				var count int
+				if rows.Scan(&nextWord, &count) == nil {
+					allCandidates = append(allCandidates, nextWord)
+					allWeights = append(allWeights, count)
+					totalWeight += count
+				}
+			}
+			rows.Close()
+		}
+
+		if len(allCandidates) == 0 {
+			break
+		}
+
+		// Weighted random selection
+		r := startBrain.rng.Intn(totalWeight)
+		cumulative := 0
+		var nextWord string
+		for i, w := range allWeights {
+			cumulative += w
+			if r < cumulative {
+				nextWord = allCandidates[i]
+				break
+			}
+		}
+
+		result = append(result, nextWord)
+		word1 = word2
+		word2 = nextWord
+	}
+
+	return strings.Join(result, " ")
+}
+
 // GetDatabaseStats returns overall database statistics
 func (m *Manager) GetDatabaseStats() map[string]interface{} {
 	stats := make(map[string]interface{})
