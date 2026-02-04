@@ -1012,7 +1012,8 @@ function renderTransitions(result) {
                 <span class="word" title="${escapeHtml(t.word1)}">${escapeHtml(t.word1)}</span>
                 <span class="word" title="${escapeHtml(t.word2)}">${escapeHtml(t.word2)}</span>
                 <span class="word" title="${escapeHtml(t.next_word)}">${escapeHtml(t.next_word)}</span>
-                <span class="count">${t.count}</span>
+                <input type="number" class="count-input" value="${t.count}" min="1" 
+                    onchange="updateTransitionCount('${escapeHtml(t.word1)}', '${escapeHtml(t.word2)}', '${escapeHtml(t.next_word)}', this.value)">
                 <button class="delete-btn" onclick="deleteTransition('${escapeHtml(t.word1)}', '${escapeHtml(t.word2)}', '${escapeHtml(t.next_word)}')">Delete</button>
             </div>
         `).join('')}
@@ -1098,6 +1099,25 @@ async function deleteTransition(word1, word2, nextWord) {
     loadTransitions();
     loadBrains();
     loadDatabaseStats();
+}
+
+async function updateTransitionCount(word1, word2, nextWord, count) {
+    const newCount = parseInt(count, 10);
+    if (isNaN(newCount) || newCount < 1) {
+        // If count is less than 1, delete the transition
+        if (confirm(`Count is less than 1. Delete transition: "${word1}" + "${word2}" → "${nextWord}"?`)) {
+            await deleteTransition(word1, word2, nextWord);
+        } else {
+            loadTransitions(); // Reload to reset the input
+        }
+        return;
+    }
+    
+    await fetch(`/api/brains/${editorState.channel}/transition`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word1, word2, next_word: nextWord, count: newCount })
+    });
 }
 
 // Utilities

@@ -177,6 +177,7 @@ All configuration is done via the Web UI at `https://localhost:24601`.
 | POST | `/api/brains/{channel}/clean` | Clean blacklisted words |
 | DELETE | `/api/brains/{channel}` | Delete brain data |
 | DELETE | `/api/brains/{channel}/transition` | Delete specific transition |
+| PUT | `/api/brains/{channel}/transition` | Update transition count |
 | GET | `/api/blacklist` | List blacklisted words |
 | POST | `/api/blacklist` | Add blacklisted word |
 | DELETE | `/api/blacklist/{word}` | Remove blacklisted word |

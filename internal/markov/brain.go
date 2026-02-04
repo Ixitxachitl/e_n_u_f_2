@@ -504,6 +504,20 @@ func (b *Brain) DeleteTransition(word1, word2, nextWord string) error {
 	return err
 }
 
+// UpdateTransitionCount updates the count for a specific transition
+func (b *Brain) UpdateTransitionCount(word1, word2, nextWord string, count int) error {
+	if count < 1 {
+		return b.DeleteTransition(word1, word2, nextWord)
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	_, err := b.db.Exec(`UPDATE transitions SET count = ? WHERE word1 = ? AND word2 = ? AND next_word = ?`,
+		count, word1, word2, nextWord)
+	return err
+}
+
 func (b *Brain) containsBlacklistedWord(message string) bool {
 	words := strings.Fields(strings.ToLower(message))
 	for _, word := range words {

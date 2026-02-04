@@ -862,6 +862,28 @@ func (s *Server) handleBrainAction(w http.ResponseWriter, r *http.Request) {
 			httpError(w, "Unknown action", http.StatusBadRequest)
 		}
 
+	case http.MethodPut:
+		if action == "transition" {
+			var req struct {
+				Word1    string `json:"word1"`
+				Word2    string `json:"word2"`
+				NextWord string `json:"next_word"`
+				Count    int    `json:"count"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				httpError(w, "Invalid request", http.StatusBadRequest)
+				return
+			}
+			brain := s.manager.GetBrainManager().GetBrain(channel)
+			if err := brain.UpdateTransitionCount(req.Word1, req.Word2, req.NextWord, req.Count); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			jsonResponse(w, map[string]string{"status": "updated"})
+		} else {
+			httpError(w, "Unknown action", http.StatusBadRequest)
+		}
+
 	case http.MethodDelete:
 		if action == "transition" {
 			var req struct {
