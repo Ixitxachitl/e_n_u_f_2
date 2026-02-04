@@ -879,11 +879,12 @@ func (s *Server) handleBrainAction(w http.ResponseWriter, r *http.Request) {
 			}
 			jsonResponse(w, map[string]string{"status": "deleted"})
 		} else if action == "" {
-			if err := s.manager.GetBrainManager().DeleteBrain(channel); err != nil {
+			// Erase brain data (clear but keep the database file)
+			if err := s.manager.GetBrainManager().EraseBrain(channel); err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			jsonResponse(w, map[string]string{"status": "deleted", "channel": channel})
+			jsonResponse(w, map[string]string{"status": "erased", "channel": channel})
 		} else {
 			httpError(w, "Unknown action", http.StatusBadRequest)
 		}

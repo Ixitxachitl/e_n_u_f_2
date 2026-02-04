@@ -142,7 +142,7 @@ func (m *Manager) JoinChannel(channel string) error {
 	return nil
 }
 
-// LeaveChannel disconnects from a channel and removes it from config
+// LeaveChannel disconnects from a channel, removes it from config, and deletes its brain data
 func (m *Manager) LeaveChannel(channel string) {
 	channel = strings.ToLower(channel)
 
@@ -158,9 +158,14 @@ func (m *Manager) LeaveChannel(channel string) {
 		client.Disconnect()
 	}
 
+	// Delete the brain data for this channel
+	if err := m.brainMgr.DeleteBrain(channel); err != nil {
+		log.Printf("Warning: failed to delete brain for %s: %v", channel, err)
+	}
+
 	// Always remove from config, even if not currently connected
 	m.cfg.RemoveChannel(channel)
-	log.Printf("Left channel: %s", channel)
+	log.Printf("Left channel: %s (brain data deleted)", channel)
 }
 
 // GetChannelStatus returns status for all configured channels (excluding bot's own channel)

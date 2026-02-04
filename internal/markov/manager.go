@@ -139,7 +139,17 @@ func (m *Manager) ListBrains() []BrainStats {
 	return stats
 }
 
-// DeleteBrain deletes brain data for a channel
+// EraseBrain clears all brain data for a channel but keeps the database file
+func (m *Manager) EraseBrain(channel string) error {
+	channel = strings.ToLower(channel)
+	brain := m.GetBrain(channel)
+	if brain == nil {
+		return nil
+	}
+	return brain.Erase()
+}
+
+// DeleteBrain deletes brain data for a channel (removes the database file)
 func (m *Manager) DeleteBrain(channel string) error {
 	channel = strings.ToLower(channel)
 

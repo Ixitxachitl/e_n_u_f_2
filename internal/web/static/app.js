@@ -33,6 +33,15 @@ const MAX_LOG_ENTRIES = 100;
 const appRamHistory = [];
 const MAX_RAM_POINTS = 20;
 
+// Pagination state
+const ITEMS_PER_PAGE = 10;
+let channelsData = [];
+let channelsPage = 1;
+let channelsFilter = '';
+let brainsData = [];
+let brainsPage = 1;
+let brainsFilter = '';
+
 // DOM Elements
 const elements = {};
 
@@ -106,11 +115,16 @@ function cacheElements() {
     elements.ramBar = document.getElementById('ram-bar');
     elements.ramValue = document.getElementById('ram-value');
     elements.ramDetails = document.getElementById('ram-details');
+    elements.diskBar = document.getElementById('disk-bar');
     elements.storageValue = document.getElementById('storage-value');
     elements.storageDetails = document.getElementById('storage-details');
     elements.appRamSparkline = document.getElementById('app-ram-sparkline');
     elements.appRamValue = document.getElementById('app-ram-value');
     elements.dbSizeValue = document.getElementById('db-size-value');
+    elements.channelSearch = document.getElementById('channel-search');
+    elements.channelsPagination = document.getElementById('channels-pagination');
+    elements.brainSearch = document.getElementById('brain-search');
+    elements.brainsPagination = document.getElementById('brains-pagination');
 }
 
 // Tab Navigation
@@ -159,6 +173,20 @@ function setupEventListeners() {
     // Self-join toggle
     elements.allowSelfJoin.addEventListener('change', async () => {
         await api.put('/api/config', { allow_self_join: elements.allowSelfJoin.checked });
+    });
+
+    // Channel search
+    elements.channelSearch.addEventListener('input', () => {
+        channelsFilter = elements.channelSearch.value.toLowerCase();
+        channelsPage = 1;
+        renderChannels(channelsData);
+    });
+
+    // Brain search
+    elements.brainSearch.addEventListener('input', () => {
+        brainsFilter = elements.brainSearch.value.toLowerCase();
+        brainsPage = 1;
+        renderBrains(brainsData);
     });
 
     // Blacklist
@@ -280,6 +308,15 @@ async function loadStatus() {
         const usedGB = status.storage.used_gb;
         const totalGB = status.storage.total_gb;
         const percent = status.storage.used_percent;
+        
+        // Update bar width and color
+        elements.diskBar.style.width = `${percent}%`;
+        elements.diskBar.classList.remove('high', 'critical');
+        if (percent >= 90) {
+            elements.diskBar.classList.add('critical');
+        } else if (percent >= 75) {
+            elements.diskBar.classList.add('high');
+        }
         
         elements.storageValue.textContent = `${Math.round(percent)}%`;
         elements.storageDetails.textContent = `${usedGB.toFixed(0)} / ${totalGB.toFixed(0)} GB`;
@@ -404,7 +441,8 @@ async function logout() {
 
 async function loadChannels() {
     const channels = await api.get('/api/channels');
-    renderChannels(channels);
+    channelsData = channels || [];
+    renderChannels(channelsData);
 }
 
 async function loadLiveChannels() {
@@ -414,7 +452,8 @@ async function loadLiveChannels() {
 
 async function loadBrains() {
     const brains = await api.get('/api/brains');
-    renderBrains(brains);
+    brainsData = brains || [];
+    renderBrains(brainsData);
 }
 
 async function loadBlacklist() {
@@ -439,11 +478,32 @@ async function loadDatabaseStats() {
 function renderChannels(channels) {
     if (!channels || channels.length === 0) {
         elements.channelsList.innerHTML = '<div class="empty-state">No channels configured</div>';
+        elements.channelsPagination.innerHTML = '';
         return;
     }
 
-    // Channels tab - with actions (no reconnect since bot auto-joins when live)
-    const channelsHtml = channels.map(ch => {
+    // Sort alphabetically
+    const sorted = [...channels].sort((a, b) => a.channel.localeCompare(b.channel));
+    
+    // Filter
+    const filtered = channelsFilter 
+        ? sorted.filter(ch => ch.channel.toLowerCase().includes(channelsFilter))
+        : sorted;
+    
+    if (filtered.length === 0) {
+        elements.channelsList.innerHTML = '<div class="empty-state">No channels match your search</div>';
+        elements.channelsPagination.innerHTML = '';
+        return;
+    }
+    
+    // Paginate
+    const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
+    if (channelsPage > totalPages) channelsPage = totalPages;
+    const start = (channelsPage - 1) * ITEMS_PER_PAGE;
+    const paged = filtered.slice(start, start + ITEMS_PER_PAGE);
+
+    // Render channels
+    const channelsHtml = paged.map(ch => {
         const profileImg = ch.profile_image_url 
             ? `<img src="${ch.profile_image_url}" class="channel-avatar" alt="${ch.channel}">` 
             : `<span class="channel-avatar-placeholder"></span>`;
@@ -472,7 +532,33 @@ function renderChannels(channels) {
     `}).join('');
 
     elements.channelsList.innerHTML = channelsHtml;
+    
+    // Render pagination
+    renderPagination(elements.channelsPagination, channelsPage, totalPages, filtered.length, 'channels');
 }
+
+function renderPagination(container, currentPage, totalPages, totalItems, type) {
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+    
+    let html = `<button onclick="goToPage('${type}', ${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>&laquo; Prev</button>`;
+    html += `<span class="page-info">${currentPage} of ${totalPages} (${totalItems} items)</span>`;
+    html += `<button onclick="goToPage('${type}', ${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next &raquo;</button>`;
+    
+    container.innerHTML = html;
+}
+
+window.goToPage = function(type, page) {
+    if (type === 'channels') {
+        channelsPage = page;
+        renderChannels(channelsData);
+    } else if (type === 'brains') {
+        brainsPage = page;
+        renderBrains(brainsData);
+    }
+};
 
 async function updateChannelInterval(channel, interval) {
     const num = parseInt(interval);
@@ -498,7 +584,10 @@ function renderLiveChannels(liveChannels) {
         return;
     }
 
-    const html = liveChannels.map(ch => {
+    // Sort alphabetically
+    const sorted = [...liveChannels].sort((a, b) => a.channel.localeCompare(b.channel));
+
+    const html = sorted.map(ch => {
         const countdown = ch.messages_until || 0;
         const interval = ch.message_interval || 1;
         const percentage = Math.round(((interval - countdown) / interval) * 100);
@@ -536,25 +625,58 @@ function renderLiveChannels(liveChannels) {
 function renderBrains(brains) {
     if (!brains || brains.length === 0) {
         elements.brainsList.innerHTML = '<div class="empty-state">No brain data yet</div>';
+        elements.brainsPagination.innerHTML = '';
         return;
     }
 
-    elements.brainsList.innerHTML = brains.map(brain => `
+    // Sort alphabetically
+    const sorted = [...brains].sort((a, b) => a.channel.localeCompare(b.channel));
+    
+    // Filter by search
+    const filtered = sorted.filter(brain => 
+        brain.channel.toLowerCase().includes(brainsFilter.toLowerCase())
+    );
+    
+    if (filtered.length === 0) {
+        elements.brainsList.innerHTML = '<div class="empty-state">No databases match your search</div>';
+        elements.brainsPagination.innerHTML = '';
+        return;
+    }
+    
+    // Paginate
+    const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
+    if (brainsPage > totalPages) brainsPage = totalPages;
+    if (brainsPage < 1) brainsPage = 1;
+    
+    const startIndex = (brainsPage - 1) * ITEMS_PER_PAGE;
+    const pageItems = filtered.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+    elements.brainsList.innerHTML = pageItems.map(brain => {
+        const sizeMB = brain.db_size / 1024 / 1024;
+        const sizeText = sizeMB >= 1024 
+            ? `${(sizeMB / 1024).toFixed(2)} GB`
+            : sizeMB >= 1 
+                ? `${sizeMB.toFixed(1)} MB`
+                : `${(brain.db_size / 1024).toFixed(0)} KB`;
+        return `
         <div class="list-item clickable" onclick="openBrainEditor('${brain.channel}')">
             <div class="info">
                 <div class="name">${brain.channel}</div>
                 <div class="stats">
                     ${brain.unique_pairs.toLocaleString()} pairs • 
                     ${brain.total_entries.toLocaleString()} entries •
-                    ${brain.message_count.toLocaleString()} messages
+                    ${brain.message_count.toLocaleString()} messages •
+                    <span class="db-size">${sizeText}</span>
                 </div>
             </div>
             <div class="actions" onclick="event.stopPropagation()">
                 <button class="btn warning" onclick="cleanBrain('${brain.channel}')">Clean</button>
-                <button class="btn danger" onclick="deleteBrain('${brain.channel}')">Delete</button>
+                <button class="btn danger" onclick="eraseBrain('${brain.channel}')">Erase</button>
             </div>
         </div>
-    `).join('');
+    `}).join('');
+    
+    renderPagination(elements.brainsPagination, brainsPage, totalPages, filtered.length, 'brains');
 }
 
 function renderBlacklist(words) {
@@ -650,8 +772,8 @@ async function cleanBrain(channel) {
     loadDatabaseStats();
 }
 
-async function deleteBrain(channel) {
-    if (!confirm(`Delete all brain data for "${channel}"? This cannot be undone.`)) return;
+async function eraseBrain(channel) {
+    if (!confirm(`Erase all brain data for "${channel}"? The database will be cleared but kept. To fully remove it, remove the channel.`)) return;
     await api.delete(`/api/brains/${channel}`);
     loadBrains();
     loadDatabaseStats();

@@ -21,19 +21,23 @@
                         <span id="ram-details" class="monitor-details">-- / -- GB</span>
                     </div>
                     <div class="app-monitor">
-                        <canvas id="app-ram-sparkline" width="60" height="16"></canvas>
+                        <span class="app-monitor-label">app:</span>
+                        <canvas id="app-ram-sparkline" width="50" height="14"></canvas>
                         <span id="app-ram-value" class="app-monitor-value">-- MB</span>
                     </div>
                 </div>
                 <div class="monitor-group" title="Storage Usage">
                     <div class="system-monitor">
                         <span class="monitor-label">DISK</span>
+                        <div class="monitor-bar-container">
+                            <div id="disk-bar" class="monitor-bar"></div>
+                        </div>
                         <span id="storage-value" class="monitor-value">--%</span>
                         <span id="storage-details" class="monitor-details">-- / -- GB</span>
                     </div>
                     <div class="app-monitor">
+                        <span class="app-monitor-label">dbs:</span>
                         <span id="db-size-value" class="app-monitor-value">-- MB</span>
-                        <span class="app-monitor-label">databases</span>
                     </div>
                 </div>
                 <span id="status-indicator" class="status-badge">Connecting...</span>
@@ -138,7 +142,11 @@
                     <input type="text" id="new-channel" placeholder="Enter channel name...">
                     <button id="add-channel-btn" class="btn primary">Join Channel</button>
                 </div>
+                <div class="search-filter">
+                    <input type="text" id="channel-search" placeholder="Search channels...">
+                </div>
                 <div id="channels-list" class="list"></div>
+                <div id="channels-pagination" class="pagination"></div>
             </div>
         </section>
 
@@ -172,7 +180,11 @@
 
             <div class="card">
                 <h2>Channel Brain Data</h2>
+                <div class="search-filter">
+                    <input type="text" id="brain-search" placeholder="Search brains...">
+                </div>
                 <div id="brains-list" class="list"></div>
+                <div id="brains-pagination" class="pagination"></div>
             </div>
 
             <!-- Brain Editor Modal -->

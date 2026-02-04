@@ -368,6 +368,30 @@ func (b *Brain) Clean() (rowsRemoved int) {
 	return rowsRemoved
 }
 
+// Erase clears all brain data but keeps the database file
+func (b *Brain) Erase() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Delete all data from tables
+	_, err := b.db.Exec("DELETE FROM markov_chain")
+	if err != nil {
+		return err
+	}
+	_, err = b.db.Exec("DELETE FROM stats")
+	if err != nil {
+		return err
+	}
+	// Reset stats
+	_, err = b.db.Exec("INSERT OR REPLACE INTO stats (key, value) VALUES ('message_count', '0')")
+	if err != nil {
+		return err
+	}
+	// Vacuum to reclaim space
+	_, err = b.db.Exec("VACUUM")
+	return err
+}
+
 // Delete removes all brain data for this channel (deletes the database file)
 func (b *Brain) Delete() error {
 	b.mu.Lock()

@@ -57,6 +57,7 @@ header h1 {
     padding: 6px 10px;
     background-color: var(--bg-tertiary);
     border-radius: 12px;
+    min-width: 180px;
 }
 
 .system-monitor {
@@ -73,6 +74,7 @@ header h1 {
     gap: 4px;
     font-size: 0.65rem;
     padding-left: 2px;
+    height: 16px;
 }
 
 .app-monitor-value {
@@ -97,6 +99,7 @@ header h1 {
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    min-width: 28px;
 }
 
 .monitor-bar-container {
@@ -244,6 +247,67 @@ header h1 {
     display: flex;
     gap: 10px;
     margin-bottom: 15px;
+}
+
+.search-filter {
+    margin-bottom: 15px;
+}
+
+.search-filter input {
+    width: 100%;
+    padding: 10px 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.search-filter input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border);
+}
+
+.pagination button {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+}
+
+.pagination button:hover:not(:disabled) {
+    background-color: var(--accent);
+    border-color: var(--accent);
+}
+
+.pagination button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pagination button.active {
+    background-color: var(--accent);
+    border-color: var(--accent);
+}
+
+.pagination .page-info {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin: 0 10px;
 }
 
 input[type="text"],
@@ -394,6 +458,11 @@ input[type="password"]::placeholder {
 .list-item .stats {
     font-size: 0.85rem;
     color: var(--text-secondary);
+}
+
+.list-item .stats .db-size {
+    font-family: monospace;
+    color: var(--accent);
 }
 
 .list-item .stream-title {
