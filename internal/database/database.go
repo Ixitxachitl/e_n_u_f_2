@@ -99,6 +99,18 @@ func createTables() error {
 			username TEXT NOT NULL,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+
+		// Activity log table for recent messages
+		`CREATE TABLE IF NOT EXISTS activity (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			channel TEXT NOT NULL,
+			username TEXT NOT NULL,
+			message TEXT NOT NULL,
+			color TEXT DEFAULT '',
+			emotes TEXT DEFAULT '',
+			badges TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	for _, table := range tables {

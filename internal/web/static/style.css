@@ -449,6 +449,8 @@ input[type="password"]::placeholder {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    flex: 1;
+    min-width: 0;
 }
 
 .list-item .name {
@@ -532,10 +534,6 @@ input[type="password"]::placeholder {
     color: var(--accent);
     margin-top: 6px;
     font-style: italic;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 400px;
 }
 
 /* Channel profile avatars */
@@ -845,6 +843,18 @@ input[type="range"]::-webkit-slider-thumb {
 .log-entry .username {
     color: var(--success);
     margin-right: 5px;
+    font-weight: 500;
+}
+
+.log-entry .message {
+    word-break: break-word;
+}
+
+/* Twitch emotes */
+.twitch-emote {
+    height: 1.2em;
+    vertical-align: middle;
+    margin: 0 2px;
 }
 
 .actions {

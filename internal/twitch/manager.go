@@ -246,7 +246,7 @@ func (m *Manager) SetEventHandler(handler func(string, interface{})) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) onMessage(channel, username, message string) {
+func (m *Manager) onMessage(channel, username, message, color, emotes, badges string) {
 	m.mu.Lock()
 	m.msgCounts[channel]++
 	handler := m.eventHandler
@@ -257,6 +257,9 @@ func (m *Manager) onMessage(channel, username, message string) {
 			"channel":  channel,
 			"username": username,
 			"message":  message,
+			"color":    color,
+			"emotes":   emotes,
+			"badges":   badges,
 		})
 	}
 }

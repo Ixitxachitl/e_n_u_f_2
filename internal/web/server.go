@@ -85,6 +85,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/userblacklist", s.handleUserBlacklist)
 	mux.HandleFunc("/api/userblacklist/", s.handleUserBlacklistAction)
 	mux.HandleFunc("/api/database", s.handleDatabase)
+	mux.HandleFunc("/api/activity", s.handleActivity)
 	mux.HandleFunc("/api/logout", s.handleLogout)
 	mux.HandleFunc("/ws", s.handleWebSocket)
 
@@ -1010,6 +1011,14 @@ func (s *Server) handleDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	jsonResponse(w, s.cfg.GetRecentActivity())
+}
+
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -1038,6 +1047,20 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) broadcastEvent(event string, data interface{}) {
+	// Save message events to activity log
+	if event == "message" {
+		if msgData, ok := data.(map[string]string); ok {
+			s.cfg.AddActivityEntry(
+				msgData["channel"],
+				msgData["username"],
+				msgData["message"],
+				msgData["color"],
+				msgData["emotes"],
+				msgData["badges"],
+			)
+		}
+	}
+
 	msg := map[string]interface{}{
 		"event": event,
 		"data":  data,

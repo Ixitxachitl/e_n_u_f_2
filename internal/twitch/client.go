@@ -29,7 +29,7 @@ type Client struct {
 	writer       *bufio.Writer
 	running      bool
 	mu           sync.Mutex
-	onMessage    func(channel, username, message string)
+	onMessage    func(channel, username, message, color, emotes, badges string)
 	onConnect    func(channel string)
 	onDisconnect func(channel string)
 	onCommand    func(channel, username, command string)
@@ -56,7 +56,7 @@ func NewClient(channel string, cfg *config.Config, brain *markov.Brain) *Client 
 }
 
 // SetCallbacks sets the callback functions
-func (c *Client) SetCallbacks(onMessage func(string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string)) {
+func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string)) {
 	c.onMessage = onMessage
 	c.onConnect = onConnect
 	c.onDisconnect = onDisconnect
@@ -218,7 +218,10 @@ func (c *Client) handleMessage(raw string) {
 	switch msg.Command {
 	case "PRIVMSG":
 		if c.onMessage != nil {
-			c.onMessage(msg.Channel, msg.Username, msg.Content)
+			color := msg.Tags["color"]
+			emotes := msg.Tags["emotes"]
+			badges := msg.Tags["badges"]
+			c.onMessage(msg.Channel, msg.Username, msg.Content, color, emotes, badges)
 		}
 
 		// Check for commands

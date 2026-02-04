@@ -338,3 +338,62 @@ func (c *Config) RenameChannel(oldName, newName string) error {
 	_, err := db.Exec("UPDATE channels SET name = ? WHERE name = ?", newName, oldName)
 	return err
 }
+
+// ActivityEntry represents a recent activity log entry
+type ActivityEntry struct {
+	ID        int64  `json:"id"`
+	Channel   string `json:"channel"`
+	Username  string `json:"username"`
+	Message   string `json:"message"`
+	Color     string `json:"color"`
+	Emotes    string `json:"emotes"`
+	Badges    string `json:"badges"`
+	CreatedAt string `json:"created_at"`
+}
+
+const maxActivityEntries = 50
+
+// AddActivityEntry adds a new activity entry, keeping only the most recent 50
+func (c *Config) AddActivityEntry(channel, username, message, color, emotes, badges string) error {
+	db := database.GetDB()
+
+	// Insert new entry
+	_, err := db.Exec(`
+		INSERT INTO activity (channel, username, message, color, emotes, badges)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, channel, username, message, color, emotes, badges)
+	if err != nil {
+		return err
+	}
+
+	// Delete old entries keeping only the most recent 50
+	_, err = db.Exec(`
+		DELETE FROM activity WHERE id NOT IN (
+			SELECT id FROM activity ORDER BY id DESC LIMIT ?
+		)
+	`, maxActivityEntries)
+	return err
+}
+
+// GetRecentActivity returns the most recent activity entries
+func (c *Config) GetRecentActivity() []ActivityEntry {
+	db := database.GetDB()
+	rows, err := db.Query(`
+		SELECT id, channel, username, message, color, emotes, badges, created_at
+		FROM activity
+		ORDER BY id DESC
+		LIMIT ?
+	`, maxActivityEntries)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var entries []ActivityEntry
+	for rows.Next() {
+		var e ActivityEntry
+		rows.Scan(&e.ID, &e.Channel, &e.Username, &e.Message, &e.Color, &e.Emotes, &e.Badges, &e.CreatedAt)
+		entries = append(entries, e)
+	}
+	return entries
+}

@@ -29,9 +29,82 @@ const api = {
 // State
 let ws = null;
 const activityLog = [];
-const MAX_LOG_ENTRIES = 100;
+const MAX_LOG_ENTRIES = 50;
 const appRamHistory = [];
 const MAX_RAM_POINTS = 20;
+
+// Twitch color palette for random user colors
+const TWITCH_COLORS = [
+    '#FF0000', '#0000FF', '#008000', '#B22222', '#FF7F50',
+    '#9ACD32', '#FF4500', '#2E8B57', '#DAA520', '#D2691E',
+    '#5F9EA0', '#1E90FF', '#FF69B4', '#8A2BE2', '#00FF7F'
+];
+
+// User color cache (for random colors)
+const userColorCache = {};
+
+// Generate consistent random color for a username
+function getUserColor(username, providedColor) {
+    if (providedColor && providedColor.startsWith('#')) {
+        return providedColor;
+    }
+    if (!userColorCache[username]) {
+        // Use username hash for consistent color
+        let hash = 0;
+        for (let i = 0; i < username.length; i++) {
+            hash = username.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        userColorCache[username] = TWITCH_COLORS[Math.abs(hash) % TWITCH_COLORS.length];
+    }
+    return userColorCache[username];
+}
+
+// Parse Twitch emotes tag and replace in message
+function parseEmotes(message, emotesTag) {
+    if (!emotesTag || emotesTag === '') return escapeHtml(message);
+    
+    // Parse emotes tag format: "emote_id:start-end,start-end/emote_id:start-end"
+    const replacements = [];
+    const emoteParts = emotesTag.split('/');
+    
+    for (const part of emoteParts) {
+        if (!part) continue;
+        const [emoteId, positions] = part.split(':');
+        if (!positions) continue;
+        
+        const positionParts = positions.split(',');
+        for (const pos of positionParts) {
+            const [start, end] = pos.split('-').map(Number);
+            const emoteName = message.substring(start, end + 1);
+            replacements.push({
+                start,
+                end: end + 1,
+                emoteId,
+                emoteName,
+                html: `<img src="https://static-cdn.jtvnw.net/emoticons/v2/${emoteId}/default/dark/1.0" alt="${escapeHtml(emoteName)}" title="${escapeHtml(emoteName)}" class="twitch-emote">`
+            });
+        }
+    }
+    
+    // Sort by position descending to replace from end to start (preserves positions)
+    replacements.sort((a, b) => b.start - a.start);
+    
+    // Build result with emotes replaced
+    let result = message;
+    for (const r of replacements) {
+        result = result.substring(0, r.start) + '\x00EMOTE:' + r.emoteId + ':' + r.emoteName + '\x00' + result.substring(r.end);
+    }
+    
+    // Escape HTML for text parts, then restore emotes
+    result = escapeHtml(result);
+    
+    // Replace emote placeholders with actual img tags
+    result = result.replace(/\x00EMOTE:([^:]+):([^\x00]+)\x00/g, (match, emoteId, emoteName) => {
+        return `<img src="https://static-cdn.jtvnw.net/emoticons/v2/${emoteId}/default/dark/1.0" alt="${escapeHtml(emoteName)}" title="${escapeHtml(emoteName)}" class="twitch-emote">`;
+    });
+    
+    return result;
+}
 
 // Pagination state
 const ITEMS_PER_PAGE = 10;
@@ -235,7 +308,8 @@ function connectWebSocket() {
 
 function handleWebSocketEvent(data) {
     if (data.event === 'message') {
-        addLogEntry(data.data.channel, data.data.username, data.data.message);
+        const d = data.data;
+        addLogEntry(d.channel, d.username, d.message, d.color, d.emotes, d.badges);
     } else if (data.event === 'connect' || data.event === 'disconnect') {
         loadChannels();
         loadStatus();
@@ -252,7 +326,8 @@ async function loadInitialData() {
         loadBrains(),
         loadBlacklist(),
         loadIgnoredUsers(),
-        loadDatabaseStats()
+        loadDatabaseStats(),
+        loadActivity()
     ]);
 }
 
@@ -707,22 +782,58 @@ function renderIgnoredUsers(users) {
     `).join('');
 }
 
-function addLogEntry(channel, username, message) {
+function addLogEntry(channel, username, message, color = '', emotes = '', badges = '') {
     const time = new Date().toLocaleTimeString();
-    activityLog.unshift({ time, channel, username, message });
+    activityLog.unshift({ time, channel, username, message, color, emotes, badges });
     
     if (activityLog.length > MAX_LOG_ENTRIES) {
         activityLog.pop();
     }
 
-    elements.activityLog.innerHTML = activityLog.map(entry => `
+    renderActivityLog();
+}
+
+function renderActivityLog() {
+    elements.activityLog.innerHTML = activityLog.map(entry => {
+        const userColor = getUserColor(entry.username, entry.color);
+        const messageHtml = parseEmotes(entry.message, entry.emotes);
+        return `
         <div class="log-entry">
             <span class="time">${entry.time}</span>
             <span class="channel">#${entry.channel}</span>
-            <span class="username">${entry.username}:</span>
-            ${escapeHtml(entry.message)}
+            <span class="username" style="color: ${userColor}">${escapeHtml(entry.username)}:</span>
+            <span class="message">${messageHtml}</span>
         </div>
-    `).join('');
+    `}).join('');
+}
+
+async function loadActivity() {
+    const activity = await api.get('/api/activity');
+    if (!activity || activity.length === 0) return;
+    
+    // Load saved activity (in reverse order since they're stored newest first)
+    for (const entry of activity.reverse()) {
+        const time = new Date(entry.created_at).toLocaleTimeString();
+        activityLog.push({
+            time,
+            channel: entry.channel,
+            username: entry.username,
+            message: entry.message,
+            color: entry.color,
+            emotes: entry.emotes,
+            badges: entry.badges
+        });
+    }
+    
+    // Reverse to show newest first
+    activityLog.reverse();
+    
+    // Trim to max entries
+    while (activityLog.length > MAX_LOG_ENTRIES) {
+        activityLog.pop();
+    }
+    
+    renderActivityLog();
 }
 
 // Actions
