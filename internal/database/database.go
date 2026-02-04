@@ -111,6 +111,13 @@ func createTables() error {
 			badges TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+
+		// Sessions table for web UI authentication
+		`CREATE TABLE IF NOT EXISTS sessions (
+			token TEXT PRIMARY KEY,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME NOT NULL
+		)`,
 	}
 
 	for _, table := range tables {

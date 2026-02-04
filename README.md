@@ -12,6 +12,9 @@ A multi-channel Twitch chat bot written in Go with Markov chain text generation,
 - **Per-Channel Message Intervals**: Each channel can have its own response frequency (1-100 messages)
 
 ### Authentication & Security
+- **Admin Password Protection**: Web UI requires password authentication for remote access
+- **Localhost Exception**: No password required when accessing from the same machine
+- **Session Management**: Secure cookie-based sessions with 24-hour expiry
 - **Twitch OAuth Integration**: Secure login via Twitch OAuth flow
 - **HTTPS Support**: Self-signed certificate generation for secure OAuth callbacks
 - **Word & User Blacklists**: Filter unwanted words and ignore specific users
@@ -159,6 +162,15 @@ All configuration is done via the Web UI at `https://localhost:24601`.
 
 ## API Endpoints
 
+### Authentication (no auth required)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/auth/status` | Check auth status (needs setup, authenticated, localhost) |
+| POST | `/api/auth/setup` | Set admin password (first time only) |
+| POST | `/api/auth/login` | Login with password |
+| POST | `/api/auth/logout` | Logout and clear session |
+
+### Protected Endpoints (require auth or localhost)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/status` | Bot status and stats |

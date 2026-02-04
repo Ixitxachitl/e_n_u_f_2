@@ -121,8 +121,146 @@ const elements = {};
 // Auto-refresh interval
 let refreshInterval = null;
 
+// Auth state
+let isAuthenticated = false;
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    checkAuthStatus();
+});
+
+// Check authentication status and show appropriate UI
+async function checkAuthStatus() {
+    try {
+        const res = await fetch('/api/auth/status');
+        const status = await res.json();
+        
+        const overlay = document.getElementById('auth-overlay');
+        const setupForm = document.getElementById('setup-form');
+        const loginForm = document.getElementById('login-form');
+        const authLoading = document.getElementById('auth-loading');
+        
+        authLoading.style.display = 'none';
+        
+        if (status.needs_setup) {
+            // First time setup - show password creation
+            setupForm.style.display = 'block';
+            loginForm.style.display = 'none';
+            setupAuthListeners();
+        } else if (status.authenticated) {
+            // Already authenticated - proceed to app
+            isAuthenticated = true;
+            overlay.style.display = 'none';
+            initializeApp();
+        } else {
+            // Need to login
+            setupForm.style.display = 'none';
+            loginForm.style.display = 'block';
+            setupAuthListeners();
+        }
+    } catch (err) {
+        console.error('Auth check failed:', err);
+        document.getElementById('auth-loading').innerHTML = '<p class="error-message">Failed to connect to server</p>';
+    }
+}
+
+// Setup auth form listeners
+function setupAuthListeners() {
+    // Setup form
+    const setupBtn = document.getElementById('setup-btn');
+    const setupPassword = document.getElementById('setup-password');
+    const setupConfirm = document.getElementById('setup-password-confirm');
+    
+    setupBtn.onclick = async () => {
+        const password = setupPassword.value;
+        const confirm = setupConfirm.value;
+        const errorEl = document.getElementById('setup-error');
+        
+        if (password.length < 4) {
+            errorEl.textContent = 'Password must be at least 4 characters';
+            return;
+        }
+        if (password !== confirm) {
+            errorEl.textContent = 'Passwords do not match';
+            return;
+        }
+        
+        errorEl.textContent = '';
+        setupBtn.disabled = true;
+        
+        try {
+            const res = await fetch('/api/auth/setup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+            });
+            
+            if (res.ok) {
+                isAuthenticated = true;
+                document.getElementById('auth-overlay').style.display = 'none';
+                initializeApp();
+            } else {
+                const data = await res.json();
+                errorEl.textContent = data.error || 'Setup failed';
+                setupBtn.disabled = false;
+            }
+        } catch (err) {
+            errorEl.textContent = 'Connection error';
+            setupBtn.disabled = false;
+        }
+    };
+    
+    // Enter key for setup
+    setupConfirm.onkeypress = (e) => {
+        if (e.key === 'Enter') setupBtn.click();
+    };
+    
+    // Login form
+    const loginBtn = document.getElementById('login-btn');
+    const loginPassword = document.getElementById('login-password');
+    
+    loginBtn.onclick = async () => {
+        const password = loginPassword.value;
+        const errorEl = document.getElementById('login-error');
+        
+        if (!password) {
+            errorEl.textContent = 'Please enter your password';
+            return;
+        }
+        
+        errorEl.textContent = '';
+        loginBtn.disabled = true;
+        
+        try {
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+            });
+            
+            if (res.ok) {
+                isAuthenticated = true;
+                document.getElementById('auth-overlay').style.display = 'none';
+                initializeApp();
+            } else {
+                const data = await res.json();
+                errorEl.textContent = data.error || 'Login failed';
+                loginBtn.disabled = false;
+            }
+        } catch (err) {
+            errorEl.textContent = 'Connection error';
+            loginBtn.disabled = false;
+        }
+    };
+    
+    // Enter key for login
+    loginPassword.onkeypress = (e) => {
+        if (e.key === 'Enter') loginBtn.click();
+    };
+}
+
+// Initialize the main application
+function initializeApp() {
     cacheElements();
     setupTabs();
     restoreSavedTab();
@@ -130,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
     loadInitialData();
     startAutoRefresh();
-});
+}
 
 // Start auto-refresh every 5 seconds
 function startAutoRefresh() {
@@ -282,6 +420,61 @@ function setupEventListeners() {
     document.getElementById('transition-search').addEventListener('keypress', e => {
         if (e.key === 'Enter') searchTransitions();
     });
+
+    // Change password
+    document.getElementById('change-password-btn').addEventListener('click', changePassword);
+    document.getElementById('confirm-new-password').addEventListener('keypress', e => {
+        if (e.key === 'Enter') changePassword();
+    });
+}
+
+// Change admin password
+async function changePassword() {
+    const currentPassword = document.getElementById('current-password').value;
+    const newPassword = document.getElementById('new-password').value;
+    const confirmPassword = document.getElementById('confirm-new-password').value;
+    const messageEl = document.getElementById('password-change-message');
+    
+    messageEl.className = 'hint';
+    
+    if (newPassword.length < 4) {
+        messageEl.textContent = 'New password must be at least 4 characters';
+        messageEl.className = 'hint error-text';
+        return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+        messageEl.textContent = 'New passwords do not match';
+        messageEl.className = 'hint error-text';
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword
+            })
+        });
+        
+        if (res.ok) {
+            messageEl.textContent = 'Password changed successfully!';
+            messageEl.className = 'hint success-text';
+            // Clear the form
+            document.getElementById('current-password').value = '';
+            document.getElementById('new-password').value = '';
+            document.getElementById('confirm-new-password').value = '';
+        } else {
+            const data = await res.json();
+            messageEl.textContent = data.error || 'Failed to change password';
+            messageEl.className = 'hint error-text';
+        }
+    } catch (err) {
+        messageEl.textContent = 'Connection error';
+        messageEl.className = 'hint error-text';
+    }
 }
 
 // WebSocket

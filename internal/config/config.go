@@ -1,9 +1,14 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"twitchbot/internal/database"
 )
@@ -396,4 +401,104 @@ func (c *Config) GetRecentActivity() []ActivityEntry {
 		entries = append(entries, e)
 	}
 	return entries
+}
+
+// Authentication functions
+
+// hashPassword creates a SHA-256 hash of the password with a salt
+func hashPassword(password, salt string) string {
+	h := sha256.New()
+	h.Write([]byte(salt + password))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// generateSalt generates a random salt
+func generateSalt() string {
+	bytes := make([]byte, 16)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
+}
+
+// generateToken generates a random session token
+func generateToken() string {
+	bytes := make([]byte, 32)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
+}
+
+// HasAdminPassword checks if an admin password has been set
+func (c *Config) HasAdminPassword() bool {
+	hash := c.getValue("admin_password_hash")
+	return hash != ""
+}
+
+// SetAdminPassword sets the admin password (first-time setup or change)
+func (c *Config) SetAdminPassword(password string) error {
+	salt := generateSalt()
+	hash := hashPassword(password, salt)
+	if err := c.setValue("admin_password_salt", salt); err != nil {
+		return err
+	}
+	return c.setValue("admin_password_hash", hash)
+}
+
+// VerifyAdminPassword checks if the provided password is correct
+func (c *Config) VerifyAdminPassword(password string) bool {
+	salt := c.getValue("admin_password_salt")
+	storedHash := c.getValue("admin_password_hash")
+	if salt == "" || storedHash == "" {
+		return false
+	}
+	providedHash := hashPassword(password, salt)
+	return subtle.ConstantTimeCompare([]byte(storedHash), []byte(providedHash)) == 1
+}
+
+// CreateSession creates a new session and returns the token
+func (c *Config) CreateSession() (string, error) {
+	token := generateToken()
+	expiresAt := time.Now().Add(24 * time.Hour) // 24 hour sessions
+
+	db := database.GetDB()
+	_, err := db.Exec(`
+		INSERT INTO sessions (token, expires_at) VALUES (?, ?)
+	`, token, expiresAt)
+	if err != nil {
+		return "", err
+	}
+
+	// Clean up expired sessions
+	db.Exec("DELETE FROM sessions WHERE expires_at < ?", time.Now())
+
+	return token, nil
+}
+
+// ValidateSession checks if a session token is valid
+func (c *Config) ValidateSession(token string) bool {
+	if token == "" {
+		return false
+	}
+
+	db := database.GetDB()
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM sessions WHERE token = ? AND expires_at > ?
+	`, token, time.Now()).Scan(&count)
+	if err != nil {
+		return false
+	}
+	return count > 0
+}
+
+// DeleteSession removes a session
+func (c *Config) DeleteSession(token string) error {
+	db := database.GetDB()
+	_, err := db.Exec("DELETE FROM sessions WHERE token = ?", token)
+	return err
+}
+
+// DeleteAllSessions removes all sessions (logout everywhere)
+func (c *Config) DeleteAllSessions() error {
+	db := database.GetDB()
+	_, err := db.Exec("DELETE FROM sessions")
+	return err
 }

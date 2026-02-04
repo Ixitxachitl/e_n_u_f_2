@@ -25,6 +25,91 @@ body {
     line-height: 1.6;
 }
 
+/* Auth Overlay */
+.auth-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-primary);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.auth-container {
+    background: var(--bg-secondary);
+    padding: 40px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    max-width: 400px;
+    width: 90%;
+    text-align: center;
+}
+
+.auth-container h1 {
+    margin-bottom: 30px;
+    font-size: 2rem;
+}
+
+.auth-container h2 {
+    margin-bottom: 10px;
+    font-size: 1.4rem;
+}
+
+.auth-container p {
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    font-size: 0.95rem;
+}
+
+.auth-form .form-group {
+    margin-bottom: 15px;
+    text-align: left;
+}
+
+.auth-form .form-group label {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.auth-form .form-group input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 1rem;
+}
+
+.auth-form .form-group input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.auth-form .btn {
+    width: 100%;
+    padding: 12px;
+    font-size: 1rem;
+    margin-top: 10px;
+}
+
+.auth-loading {
+    color: var(--text-secondary);
+}
+
+.error-message {
+    color: var(--danger);
+    font-size: 0.9rem;
+    margin-top: 10px;
+    min-height: 1.2em;
+}
+
 .container {
     max-width: 1000px;
     margin: 0 auto;
@@ -410,6 +495,14 @@ input[type="password"]::placeholder {
 .hint {
     color: var(--text-secondary);
     font-size: 0.85rem;
+}
+
+.hint.error-text {
+    color: var(--danger);
+}
+
+.hint.success-text {
+    color: var(--success);
 }
 
 .hint code {

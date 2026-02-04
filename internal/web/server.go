@@ -63,33 +63,79 @@ func NewServer(cfg *config.Config, manager *twitch.Manager) *Server {
 	return s
 }
 
+// isLocalhost checks if the request is from localhost
+func isLocalhost(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return host == "127.0.0.1" || host == "::1" || host == "localhost"
+}
+
+// getSessionToken extracts the session token from cookies
+func getSessionToken(r *http.Request) string {
+	cookie, err := r.Cookie("session")
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
+}
+
+// authMiddleware wraps a handler and requires authentication
+func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Always allow localhost without auth
+		if isLocalhost(r) {
+			next(w, r)
+			return
+		}
+
+		// Check for valid session
+		token := getSessionToken(r)
+		if s.cfg.ValidateSession(token) {
+			next(w, r)
+			return
+		}
+
+		// Not authenticated
+		httpError(w, "Unauthorized", http.StatusUnauthorized)
+	}
+}
+
 // Start starts the web server
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
-	// OAuth routes
-	mux.HandleFunc("/auth/twitch", s.handleTwitchAuth)
-	mux.HandleFunc("/auth/callback", s.handleTwitchCallback)
-	mux.HandleFunc("/auth/token", s.handleTokenExchange)
+	// Auth routes (always accessible)
+	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("/api/auth/setup", s.handleAuthSetup)
+	mux.HandleFunc("/api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("/api/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("/api/auth/change-password", s.authMiddleware(s.handleAuthChangePassword))
 
-	// API routes
-	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/config", s.handleConfig)
-	mux.HandleFunc("/api/channels", s.handleChannels)
-	mux.HandleFunc("/api/channels/", s.handleChannelAction)
-	mux.HandleFunc("/api/live", s.handleLiveChannels)
-	mux.HandleFunc("/api/brains", s.handleBrains)
-	mux.HandleFunc("/api/brains/", s.handleBrainAction)
-	mux.HandleFunc("/api/blacklist", s.handleBlacklist)
-	mux.HandleFunc("/api/blacklist/", s.handleBlacklistAction)
-	mux.HandleFunc("/api/userblacklist", s.handleUserBlacklist)
-	mux.HandleFunc("/api/userblacklist/", s.handleUserBlacklistAction)
-	mux.HandleFunc("/api/database", s.handleDatabase)
-	mux.HandleFunc("/api/activity", s.handleActivity)
-	mux.HandleFunc("/api/logout", s.handleLogout)
-	mux.HandleFunc("/ws", s.handleWebSocket)
+	// OAuth routes (protected)
+	mux.HandleFunc("/auth/twitch", s.authMiddleware(s.handleTwitchAuth))
+	mux.HandleFunc("/auth/callback", s.handleTwitchCallback) // Callback must be accessible
+	mux.HandleFunc("/auth/token", s.authMiddleware(s.handleTokenExchange))
 
-	// Static files
+	// API routes (protected)
+	mux.HandleFunc("/api/status", s.authMiddleware(s.handleStatus))
+	mux.HandleFunc("/api/config", s.authMiddleware(s.handleConfig))
+	mux.HandleFunc("/api/channels", s.authMiddleware(s.handleChannels))
+	mux.HandleFunc("/api/channels/", s.authMiddleware(s.handleChannelAction))
+	mux.HandleFunc("/api/live", s.authMiddleware(s.handleLiveChannels))
+	mux.HandleFunc("/api/brains", s.authMiddleware(s.handleBrains))
+	mux.HandleFunc("/api/brains/", s.authMiddleware(s.handleBrainAction))
+	mux.HandleFunc("/api/blacklist", s.authMiddleware(s.handleBlacklist))
+	mux.HandleFunc("/api/blacklist/", s.authMiddleware(s.handleBlacklistAction))
+	mux.HandleFunc("/api/userblacklist", s.authMiddleware(s.handleUserBlacklist))
+	mux.HandleFunc("/api/userblacklist/", s.authMiddleware(s.handleUserBlacklistAction))
+	mux.HandleFunc("/api/database", s.authMiddleware(s.handleDatabase))
+	mux.HandleFunc("/api/activity", s.authMiddleware(s.handleActivity))
+	mux.HandleFunc("/api/logout", s.authMiddleware(s.handleLogout))
+	mux.HandleFunc("/ws", s.authMiddleware(s.handleWebSocket))
+
+	// Static files (always accessible - login page needs to load)
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		return err
@@ -1108,4 +1154,193 @@ func httpError(w http.ResponseWriter, message string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// Auth handlers
+
+func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	hasPassword := s.cfg.HasAdminPassword()
+	isLocal := isLocalhost(r)
+	isAuthenticated := isLocal || s.cfg.ValidateSession(getSessionToken(r))
+
+	jsonResponse(w, map[string]interface{}{
+		"needs_setup":      !hasPassword,
+		"authenticated":    isAuthenticated,
+		"is_localhost":     isLocal,
+	})
+}
+
+func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Only allow setup if no password exists
+	if s.cfg.HasAdminPassword() {
+		httpError(w, "Admin password already set", http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Password) < 4 {
+		httpError(w, "Password must be at least 4 characters", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.cfg.SetAdminPassword(req.Password); err != nil {
+		httpError(w, "Failed to set password", http.StatusInternalServerError)
+		return
+	}
+
+	// Create a session for the user
+	token, err := s.cfg.CreateSession()
+	if err != nil {
+		httpError(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	// Set session cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   86400, // 24 hours
+	})
+
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if !s.cfg.VerifyAdminPassword(req.Password) {
+		httpError(w, "Invalid password", http.StatusUnauthorized)
+		return
+	}
+
+	// Create session
+	token, err := s.cfg.CreateSession()
+	if err != nil {
+		httpError(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	// Set session cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   86400, // 24 hours
+	})
+
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Delete the session
+	token := getSessionToken(r)
+	if token != "" {
+		s.cfg.DeleteSession(token)
+	}
+
+	// Clear the cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+
+	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Verify current password (unless localhost)
+	if !isLocalhost(r) && !s.cfg.VerifyAdminPassword(req.CurrentPassword) {
+		httpError(w, "Current password is incorrect", http.StatusUnauthorized)
+		return
+	}
+
+	if len(req.NewPassword) < 4 {
+		httpError(w, "New password must be at least 4 characters", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.cfg.SetAdminPassword(req.NewPassword); err != nil {
+		httpError(w, "Failed to change password", http.StatusInternalServerError)
+		return
+	}
+
+	// Invalidate all existing sessions for security
+	s.cfg.DeleteAllSessions()
+
+	// Create a new session for the current user
+	token, err := s.cfg.CreateSession()
+	if err != nil {
+		httpError(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	// Set new session cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   86400,
+	})
+
+	jsonResponse(w, map[string]string{"status": "ok"})
 }
