@@ -187,6 +187,7 @@ All configuration is done via the Web UI at `https://localhost:24601`.
 | GET | `/api/database` | Database statistics |
 | POST | `/api/database` | Optimize (VACUUM) database |
 | DELETE | `/api/database` | Clean all brains |
+| GET | `/api/activity` | Get recent activity log |
 
 ## Database Schema
 
