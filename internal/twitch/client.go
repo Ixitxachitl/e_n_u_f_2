@@ -246,6 +246,11 @@ func (c *Client) handleMessage(raw string) {
 
 			// !response <number> - set per-channel message interval
 			if strings.HasPrefix(cmd, "!response") {
+				userChannel := strings.ToLower(msg.Username)
+				if !c.cfg.ChannelExists(userChannel) {
+					c.SendMessage(fmt.Sprintf("@%s I'm not in your channel yet! Use !join first.", msg.Username))
+					return
+				}
 				parts := strings.Fields(msg.Content)
 				if len(parts) == 2 {
 					num, err := strconv.Atoi(parts[1])
@@ -253,12 +258,10 @@ func (c *Client) handleMessage(raw string) {
 						c.SendMessage(fmt.Sprintf("@%s Please use !response <1-100> to set how many messages before I respond in your channel.", msg.Username))
 						return
 					}
-					userChannel := strings.ToLower(msg.Username)
 					c.cfg.SetChannelMessageInterval(userChannel, num)
 					c.SendMessage(fmt.Sprintf("@%s I will now respond every %d messages in your channel!", msg.Username, num))
 				} else {
 					// Show current setting
-					userChannel := strings.ToLower(msg.Username)
 					current := c.cfg.GetChannelMessageInterval(userChannel)
 					c.SendMessage(fmt.Sprintf("@%s Your channel is set to %d messages. Use !response <1-100> to change.", msg.Username, current))
 				}
@@ -268,12 +271,20 @@ func (c *Client) handleMessage(raw string) {
 			// !global and !local - toggle between global and local brain for generation
 			if cmd == "!global" {
 				userChannel := strings.ToLower(msg.Username)
+				if !c.cfg.ChannelExists(userChannel) {
+					c.SendMessage(fmt.Sprintf("@%s I'm not in your channel yet! Use !join first.", msg.Username))
+					return
+				}
 				c.cfg.SetChannelUseGlobalBrain(userChannel, true)
 				c.SendMessage(fmt.Sprintf("@%s I will now use ALL channel brains to generate messages in your channel!", msg.Username))
 				return
 			}
 			if cmd == "!local" {
 				userChannel := strings.ToLower(msg.Username)
+				if !c.cfg.ChannelExists(userChannel) {
+					c.SendMessage(fmt.Sprintf("@%s I'm not in your channel yet! Use !join first.", msg.Username))
+					return
+				}
 				c.cfg.SetChannelUseGlobalBrain(userChannel, false)
 				c.SendMessage(fmt.Sprintf("@%s I will now use only YOUR channel's brain to generate messages!", msg.Username))
 				return

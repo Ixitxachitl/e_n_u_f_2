@@ -178,6 +178,14 @@ func (c *Config) IncrementChannelMessages(channel string) error {
 	return err
 }
 
+// ChannelExists checks if a channel exists in the database
+func (c *Config) ChannelExists(channel string) bool {
+	db := database.GetDB()
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM channels WHERE name = ?", strings.ToLower(channel)).Scan(&count)
+	return err == nil && count > 0
+}
+
 // GetChannelStats returns stats for a channel
 func (c *Config) GetChannelStats(channel string) (messageCount int64, enabled bool, err error) {
 	db := database.GetDB()
