@@ -117,6 +117,7 @@ func (m *Manager) JoinChannel(channel string) error {
 		m.onConnect,
 		m.onDisconnect,
 		m.onCommand,
+		m.onBanned,
 	)
 
 	m.clients[channel] = client
@@ -282,6 +283,11 @@ func (m *Manager) onDisconnect(channel string) {
 	if handler != nil {
 		handler("disconnect", map[string]string{"channel": channel})
 	}
+}
+
+func (m *Manager) onBanned(channel string) {
+	log.Printf("Bot was banned from channel: %s - leaving channel", channel)
+	m.LeaveChannel(channel)
 }
 
 func (m *Manager) onCommand(channel, username, command string) {

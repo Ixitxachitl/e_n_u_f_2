@@ -33,6 +33,7 @@ type Client struct {
 	onConnect    func(channel string)
 	onDisconnect func(channel string)
 	onCommand    func(channel, username, command string)
+	onBanned     func(channel string)
 }
 
 // Message represents a parsed IRC message
@@ -56,11 +57,12 @@ func NewClient(channel string, cfg *config.Config, brain *markov.Brain) *Client 
 }
 
 // SetCallbacks sets the callback functions
-func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string)) {
+func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string)) {
 	c.onMessage = onMessage
 	c.onConnect = onConnect
 	c.onDisconnect = onDisconnect
 	c.onCommand = onCommand
+	c.onBanned = onBanned
 }
 
 // Connect establishes connection to Twitch IRC with retry logic
@@ -280,6 +282,15 @@ func (c *Client) handleMessage(raw string) {
 
 	case "NOTICE":
 		log.Printf("[%s] NOTICE: %s", c.channel, msg.Content)
+		// Check for ban notice
+		if msgID, ok := msg.Tags["msg-id"]; ok {
+			if msgID == "msg_banned" || msgID == "msg_channel_suspended" {
+				log.Printf("[%s] Bot is BANNED from this channel!", c.channel)
+				if c.onBanned != nil {
+					c.onBanned(c.channel)
+				}
+			}
+		}
 
 	case "RECONNECT":
 		log.Printf("[%s] Received RECONNECT, reconnecting...", c.channel)
