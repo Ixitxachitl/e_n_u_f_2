@@ -1169,9 +1169,9 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	isAuthenticated := isLocal || s.cfg.ValidateSession(getSessionToken(r))
 
 	jsonResponse(w, map[string]interface{}{
-		"needs_setup":      !hasPassword,
-		"authenticated":    isAuthenticated,
-		"is_localhost":     isLocal,
+		"needs_setup":   !hasPassword,
+		"authenticated": isAuthenticated,
+		"is_localhost":  isLocal,
 	})
 }
 
