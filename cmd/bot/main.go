@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,6 +12,22 @@ import (
 	"twitchbot/internal/twitch"
 	"twitchbot/internal/web"
 )
+
+// getLocalIP returns the local IP address of the machine
+func getLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "localhost"
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return "localhost"
+}
 
 func main() {
 	log.Println("Starting e_n_u_f 2.0...")
@@ -43,8 +60,9 @@ func main() {
 	}()
 
 	log.Printf("Web UI available at:")
-	log.Printf("  HTTPS: https://localhost:%d", cfg.GetWebPort())
-	log.Printf("  HTTP:  http://localhost:%d", cfg.GetWebPort()+1)
+	localIP := getLocalIP()
+	log.Printf("  HTTPS: https://%s:%d", localIP, cfg.GetWebPort())
+	log.Printf("  HTTP:  http://%s:%d", localIP, cfg.GetWebPort()+1)
 
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)

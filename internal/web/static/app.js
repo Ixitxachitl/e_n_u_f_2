@@ -663,8 +663,11 @@ async function loadConfig() {
     // Set self-join toggle
     elements.allowSelfJoin.checked = config.allow_self_join !== false;
     
-    // Set redirect URL based on current location
-    const redirectUrl = `${window.location.origin}/auth/callback`;
+    // Set redirect URL - use internal IP if available for clarity
+    const protocol = window.location.protocol;
+    const port = config.web_port || window.location.port;
+    const host = config.local_ip || window.location.hostname;
+    const redirectUrl = `${protocol}//${host}:${port}/auth/callback`;
     elements.redirectUrl.textContent = redirectUrl;
     
     // Handle login state
@@ -683,6 +686,12 @@ async function loadConfig() {
     } else {
         elements.loggedOutView.style.display = 'block';
         elements.loggedInView.style.display = 'none';
+        
+        // Restore last client ID from localStorage for easy re-login
+        const lastClientId = localStorage.getItem('lastClientId');
+        if (lastClientId && !elements.clientId.value.trim()) {
+            elements.clientId.value = lastClientId;
+        }
     }
     
     // Update login button state
@@ -701,6 +710,12 @@ function updateLoginButtonState() {
 
 
 async function logout() {
+    // Save the current client ID before logout for easy re-login
+    const currentClientId = elements.clientId.value.trim();
+    if (currentClientId) {
+        localStorage.setItem('lastClientId', currentClientId);
+    }
+    
     await api.post('/api/logout', {});
     elements.loggedOutView.style.display = 'block';
     elements.loggedInView.style.display = 'none';

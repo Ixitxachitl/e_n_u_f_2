@@ -72,6 +72,22 @@ func isLocalhost(r *http.Request) bool {
 	return host == "127.0.0.1" || host == "::1" || host == "localhost"
 }
 
+// getLocalIP returns the local IP address of the machine
+func getLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "localhost"
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return "localhost"
+}
+
 // getSessionToken extracts the session token from cookies
 func getSessionToken(r *http.Request) string {
 	cookie, err := r.Cookie("session")
@@ -419,11 +435,21 @@ func (s *Server) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleLogout clears the OAuth token
+// handleLogout clears the OAuth token and cleans up the bot's brain
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+
+	// Get the current bot username before clearing
+	botUsername := s.cfg.GetBotUsername()
+
+	// Delete the bot's own brain if it exists (act like leaving)
+	if botUsername != "" {
+		if err := s.manager.GetBrainManager().DeleteBrain(botUsername); err != nil {
+			log.Printf("Warning: failed to delete bot's brain on logout: %v", err)
+		}
 	}
 
 	s.cfg.SetOAuthToken("")
@@ -503,6 +529,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"web_port":          s.cfg.GetWebPort(),
 			"bot_profile_image": botProfileImage,
 			"allow_self_join":   s.cfg.GetAllowSelfJoin(),
+			"local_ip":          getLocalIP(),
 		}
 		jsonResponse(w, config)
 
