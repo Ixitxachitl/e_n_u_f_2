@@ -1477,11 +1477,12 @@ func (s *Server) handleQuotes(w http.ResponseWriter, r *http.Request) {
 	channels, _ := database.GetQuoteChannels()
 
 	jsonResponse(w, map[string]interface{}{
-		"quotes":      quotes,
-		"total":       total,
-		"page":        page,
-		"page_size":   pageSize,
-		"total_pages": (total + pageSize - 1) / pageSize,
-		"channels":    channels,
+		"quotes":       quotes,
+		"total":        total,
+		"page":         page,
+		"page_size":    pageSize,
+		"total_pages":  (total + pageSize - 1) / pageSize,
+		"channels":     channels,
+		"bot_username": s.cfg.GetBotUsername(),
 	})
 }

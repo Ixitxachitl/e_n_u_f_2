@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🤖 e_n_u_f Quotes</title>
+    <title>🤖 Bot Quotes</title>
     <style>
         :root {
             --bg-primary: #0e0e10;
@@ -115,7 +115,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>🤖 e_n_u_f Quotes</h1>
+        <h1 id="page-title">🤖 Bot Quotes</h1>
         <div class="filters">
             <input type="text" id="search" placeholder="Search quotes...">
             <select id="channel">
@@ -143,6 +143,12 @@
             
             const res = await fetch(API_BASE + '/api/quotes?' + params);
             const data = await res.json();
+            
+            // Update page title with bot username
+            if (data.bot_username) {
+                document.getElementById('page-title').textContent = '🤖 ' + data.bot_username + ' Quotes';
+                document.title = '🤖 ' + data.bot_username + ' Quotes';
+            }
             
             // Update channel filter
             const channelSelect = document.getElementById('channel');
