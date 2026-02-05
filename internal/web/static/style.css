@@ -1022,6 +1022,21 @@ input[type="range"]::-webkit-slider-thumb {
     word-break: break-word;
 }
 
+/* Generation event styling */
+.log-entry.generation-success {
+    background: rgba(0, 200, 83, 0.1);
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin: 2px 0;
+}
+
+.log-entry.generation-failed {
+    background: rgba(255, 152, 0, 0.1);
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin: 2px 0;
+}
+
 /* Twitch emotes */
 .twitch-emote {
     height: 1.2em;

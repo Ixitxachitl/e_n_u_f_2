@@ -105,42 +105,62 @@ func (b *Brain) Close() error {
 	return nil
 }
 
+// GenerationResult contains details about a generation attempt
+type GenerationResult struct {
+	Triggered     bool   `json:"triggered"`      // Whether generation was triggered (counter reached)
+	Success       bool   `json:"success"`        // Whether a message was generated
+	Response      string `json:"response"`       // The generated message (if any)
+	Attempts      int    `json:"attempts"`       // Number of generation attempts
+	FailureReason string `json:"failure_reason"` // Why generation failed (if it did)
+	Counter       int    `json:"counter"`        // Current counter value
+	Interval      int    `json:"interval"`       // Channel interval setting
+	UsingGlobal   bool   `json:"using_global"`   // Whether global brain was used
+}
+
 // ProcessMessage learns from a message and optionally generates a response
 // If globalGenerator is provided, it will be used instead of the local Generate function
 func (b *Brain) ProcessMessage(message, username, botUsername string, globalGenerator func(int) string) string {
+	result := b.ProcessMessageWithInfo(message, username, botUsername, globalGenerator)
+	return result.Response
+}
+
+// ProcessMessageWithInfo learns from a message and returns detailed generation info
+func (b *Brain) ProcessMessageWithInfo(message, username, botUsername string, globalGenerator func(int) string) GenerationResult {
+	result := GenerationResult{}
+
 	// Skip commands
 	if strings.HasPrefix(message, "!") {
-		return ""
+		return result
 	}
 
 	// Skip bot's own messages
 	if strings.EqualFold(username, botUsername) {
-		return ""
+		return result
 	}
 
 	// Skip learning/generating in the bot's own channel
 	if strings.EqualFold(b.Channel, botUsername) {
-		return ""
+		return result
 	}
 
 	// Skip blacklisted users
 	if b.cfg.IsBlacklistedUser(username) {
-		return ""
+		return result
 	}
 
 	// Skip messages with links
 	if containsLink(message) {
-		return ""
+		return result
 	}
 
 	// Skip non-English messages
 	if !isMostlyEnglish(message) {
-		return ""
+		return result
 	}
 
 	// Skip messages with blacklisted words
 	if b.containsBlacklistedWord(message) {
-		return ""
+		return result
 	}
 
 	// Learn from the message (always local)
@@ -153,15 +173,21 @@ func (b *Brain) ProcessMessage(message, username, botUsername string, globalGene
 	b.mu.Lock()
 	b.msgCounter++
 	channelInterval := b.cfg.GetChannelMessageInterval(b.Channel)
+	result.Counter = b.msgCounter
+	result.Interval = channelInterval
 	shouldRespond := b.msgCounter >= channelInterval
 	if shouldRespond {
 		b.msgCounter = 0
+		result.Counter = 0
 	}
 	// Persist counter to database
 	b.saveCounter()
 	b.mu.Unlock()
 
 	if shouldRespond {
+		result.Triggered = true
+		result.UsingGlobal = globalGenerator != nil
+
 		// Choose generator based on setting
 		generator := b.Generate
 		if globalGenerator != nil {
@@ -170,15 +196,30 @@ func (b *Brain) ProcessMessage(message, username, botUsername string, globalGene
 
 		// Try up to 5 times to generate a clean response
 		for i := 0; i < 5; i++ {
+			result.Attempts = i + 1
 			response := generator(20)
-			if response != "" && !b.containsBlacklistedWord(response) {
-				b.saveLastMessage(response)
-				return response
+			if response == "" {
+				result.FailureReason = "empty_generation"
+				continue
 			}
+			if b.containsBlacklistedWord(response) {
+				result.FailureReason = "blacklisted_word"
+				continue
+			}
+			// Success!
+			result.Success = true
+			result.Response = response
+			result.FailureReason = ""
+			b.saveLastMessage(response)
+			return result
+		}
+		// All attempts failed
+		if result.FailureReason == "" {
+			result.FailureReason = "unknown"
 		}
 	}
 
-	return ""
+	return result
 }
 
 // GetMessageCounter returns the current message counter

@@ -118,6 +118,7 @@ func (m *Manager) JoinChannel(channel string) error {
 		m.onDisconnect,
 		m.onCommand,
 		m.onBanned,
+		m.onGeneration,
 	)
 
 	// Set global generator for combined brain generation
@@ -285,6 +286,26 @@ func (m *Manager) onDisconnect(channel string) {
 
 	if handler != nil {
 		handler("disconnect", map[string]string{"channel": channel})
+	}
+}
+
+func (m *Manager) onGeneration(channel string, result markov.GenerationResult) {
+	m.mu.RLock()
+	handler := m.eventHandler
+	m.mu.RUnlock()
+
+	if handler != nil {
+		handler("generation", map[string]interface{}{
+			"channel":        channel,
+			"triggered":      result.Triggered,
+			"success":        result.Success,
+			"response":       result.Response,
+			"attempts":       result.Attempts,
+			"failure_reason": result.FailureReason,
+			"counter":        result.Counter,
+			"interval":       result.Interval,
+			"using_global":   result.UsingGlobal,
+		})
 	}
 }
 

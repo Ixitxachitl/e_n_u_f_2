@@ -35,6 +35,7 @@ type Client struct {
 	onDisconnect    func(channel string)
 	onCommand       func(channel, username, command string)
 	onBanned        func(channel string)
+	onGeneration    func(channel string, result markov.GenerationResult)
 	globalGenerator func(int) string // Function to generate from all brains
 }
 
@@ -59,12 +60,13 @@ func NewClient(channel string, cfg *config.Config, brain *markov.Brain) *Client 
 }
 
 // SetCallbacks sets the callback functions
-func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string)) {
+func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string), onGeneration func(string, markov.GenerationResult)) {
 	c.onMessage = onMessage
 	c.onConnect = onConnect
 	c.onDisconnect = onDisconnect
 	c.onCommand = onCommand
 	c.onBanned = onBanned
+	c.onGeneration = onGeneration
 }
 
 // SetGlobalGenerator sets the function to generate from all brains
@@ -311,11 +313,17 @@ func (c *Client) handleMessage(raw string) {
 			if c.cfg.GetChannelUseGlobalBrain(c.channel) && c.globalGenerator != nil {
 				generator = c.globalGenerator
 			}
-			response := c.brain.ProcessMessage(msg.Content, msg.Username, c.cfg.GetBotUsername(), generator)
-			if response != "" {
-				c.SendMessage(response)
+			result := c.brain.ProcessMessageWithInfo(msg.Content, msg.Username, c.cfg.GetBotUsername(), generator)
+
+			// Emit generation event if generation was triggered
+			if result.Triggered && c.onGeneration != nil {
+				c.onGeneration(c.channel, result)
+			}
+
+			if result.Response != "" {
+				c.SendMessage(result.Response)
 				// Log the quote to database
-				database.SaveQuote(c.channel, response)
+				database.SaveQuote(c.channel, result.Response)
 			}
 		}
 

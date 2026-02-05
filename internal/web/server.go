@@ -1179,6 +1179,43 @@ func (s *Server) broadcastEvent(event string, data interface{}) {
 		}
 	}
 
+	// Save generation events to activity log
+	if event == "generation" {
+		if genData, ok := data.(map[string]interface{}); ok {
+			channel, _ := genData["channel"].(string)
+			success, _ := genData["success"].(bool)
+			response, _ := genData["response"].(string)
+			attempts, _ := genData["attempts"].(int)
+			failureReason, _ := genData["failure_reason"].(string)
+			usingGlobal, _ := genData["using_global"].(bool)
+
+			var message string
+			if success {
+				message = "🤖 Generated: \"" + response + "\""
+			} else {
+				reasons := map[string]string{
+					"empty_generation": "empty output",
+					"blacklisted_word": "blacklisted word in output",
+					"unknown":          "unknown reason",
+				}
+				reason := reasons[failureReason]
+				if reason == "" {
+					reason = failureReason
+				}
+				message = fmt.Sprintf("⚠️ Generation failed after %d attempt(s): %s", attempts, reason)
+			}
+
+			username := "e_n_u_f"
+			if usingGlobal {
+				username = "e_n_u_f (global)"
+			} else {
+				username = "e_n_u_f (local)"
+			}
+
+			s.cfg.AddActivityEntry(channel, username, message, "", "", "")
+		}
+	}
+
 	msg := map[string]interface{}{
 		"event": event,
 		"data":  data,

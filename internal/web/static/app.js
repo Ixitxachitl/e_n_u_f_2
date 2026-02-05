@@ -503,6 +503,9 @@ function handleWebSocketEvent(data) {
     if (data.event === 'message') {
         const d = data.data;
         addLogEntry(d.channel, d.username, d.message, d.color, d.emotes, d.badges);
+    } else if (data.event === 'generation') {
+        const d = data.data;
+        addGenerationEntry(d);
     } else if (data.event === 'connect' || data.event === 'disconnect') {
         loadChannels();
         loadStatus();
@@ -1034,8 +1037,56 @@ function addLogEntry(channel, username, message, color = '', emotes = '', badges
     renderActivityLog();
 }
 
+function addGenerationEntry(data) {
+    const time = new Date().toLocaleTimeString();
+    let message, statusClass;
+    
+    if (data.success) {
+        message = `🤖 Generated: "${data.response}"`;
+        statusClass = 'generation-success';
+    } else {
+        const reasons = {
+            'empty_generation': 'empty output',
+            'blacklisted_word': 'blacklisted word in output',
+            'unknown': 'unknown reason'
+        };
+        const reason = reasons[data.failure_reason] || data.failure_reason;
+        message = `⚠️ Generation failed after ${data.attempts} attempt(s): ${reason}`;
+        statusClass = 'generation-failed';
+    }
+    
+    const globalLabel = data.using_global ? ' (global)' : ' (local)';
+    
+    activityLog.unshift({ 
+        time, 
+        channel: data.channel, 
+        username: 'e_n_u_f' + globalLabel, 
+        message,
+        isGeneration: true,
+        statusClass
+    });
+    
+    if (activityLog.length > MAX_LOG_ENTRIES) {
+        activityLog.pop();
+    }
+
+    renderActivityLog();
+    
+    // Also refresh channel list to update countdown
+    loadChannels();
+}
+
 function renderActivityLog() {
     elements.activityLog.innerHTML = activityLog.map(entry => {
+        if (entry.isGeneration) {
+            return `
+            <div class="log-entry ${entry.statusClass}">
+                <span class="time">${entry.time}</span>
+                <span class="channel">#${entry.channel}</span>
+                <span class="username" style="color: var(--accent)">${escapeHtml(entry.username)}:</span>
+                <span class="message">${escapeHtml(entry.message)}</span>
+            </div>
+        `}
         const userColor = getUserColor(entry.username, entry.color);
         const messageHtml = parseEmotes(entry.message, entry.emotes);
         return `
