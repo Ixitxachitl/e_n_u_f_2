@@ -118,6 +118,14 @@ func createTables() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			expires_at DATETIME NOT NULL
 		)`,
+
+		// Quotes table for bot-generated messages
+		`CREATE TABLE IF NOT EXISTS quotes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			channel TEXT NOT NULL,
+			message TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	for _, table := range tables {
@@ -146,4 +154,94 @@ func createTables() error {
 	}
 
 	return nil
+}
+
+// Quote represents a bot-generated message
+type Quote struct {
+	ID        int64  `json:"id"`
+	Channel   string `json:"channel"`
+	Message   string `json:"message"`
+	CreatedAt string `json:"created_at"`
+}
+
+// SaveQuote saves a bot-generated message to the quotes table
+func SaveQuote(channel, message string) error {
+	if db == nil {
+		return nil
+	}
+	_, err := db.Exec("INSERT INTO quotes (channel, message) VALUES (?, ?)", channel, message)
+	return err
+}
+
+// GetQuotes retrieves quotes with optional search and pagination
+func GetQuotes(search string, channel string, page, pageSize int) ([]Quote, int, error) {
+	if db == nil {
+		return nil, 0, nil
+	}
+
+	// Build query
+	baseQuery := "FROM quotes WHERE 1=1"
+	args := []interface{}{}
+
+	if search != "" {
+		baseQuery += " AND message LIKE ?"
+		args = append(args, "%"+search+"%")
+	}
+	if channel != "" {
+		baseQuery += " AND channel = ?"
+		args = append(args, channel)
+	}
+
+	// Get total count
+	var total int
+	countQuery := "SELECT COUNT(*) " + baseQuery
+	if err := db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	// Get paginated results
+	offset := (page - 1) * pageSize
+	selectQuery := "SELECT id, channel, message, created_at " + baseQuery + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, pageSize, offset)
+
+	rows, err := db.Query(selectQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var quotes []Quote
+	for rows.Next() {
+		var q Quote
+		if err := rows.Scan(&q.ID, &q.Channel, &q.Message, &q.CreatedAt); err != nil {
+			continue
+		}
+		quotes = append(quotes, q)
+	}
+
+	return quotes, total, nil
+}
+
+// GetQuoteChannels returns a list of all unique channels with quotes
+func GetQuoteChannels() ([]string, error) {
+	if db == nil {
+		return nil, nil
+	}
+
+	rows, err := db.Query("SELECT DISTINCT channel FROM quotes ORDER BY channel")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []string
+	for rows.Next() {
+		var ch string
+		if err := rows.Scan(&ch); err != nil {
+			continue
+		}
+		channels = append(channels, ch)
+	}
+
+	return channels, nil
 }

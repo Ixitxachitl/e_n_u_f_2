@@ -151,6 +151,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/logout", s.authMiddleware(s.handleLogout))
 	mux.HandleFunc("/ws", s.authMiddleware(s.handleWebSocket))
 
+	// Public API routes (no auth required)
+	mux.HandleFunc("/api/quotes", s.handleQuotes)
+
 	// Static files (always accessible - login page needs to load)
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
@@ -1390,4 +1393,58 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	})
 
 	jsonResponse(w, map[string]string{"status": "ok"})
+}
+
+// handleQuotes returns bot-generated quotes (public endpoint)
+func (s *Server) handleQuotes(w http.ResponseWriter, r *http.Request) {
+	// Add CORS headers for external access
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse query parameters
+	search := r.URL.Query().Get("search")
+	channel := r.URL.Query().Get("channel")
+	page := 1
+	pageSize := 50
+
+	if p := r.URL.Query().Get("page"); p != "" {
+		fmt.Sscanf(p, "%d", &page)
+	}
+	if ps := r.URL.Query().Get("pageSize"); ps != "" {
+		fmt.Sscanf(ps, "%d", &pageSize)
+	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 50
+	}
+
+	quotes, total, err := database.GetQuotes(search, channel, page, pageSize)
+	if err != nil {
+		httpError(w, "Failed to get quotes", http.StatusInternalServerError)
+		return
+	}
+
+	channels, _ := database.GetQuoteChannels()
+
+	jsonResponse(w, map[string]interface{}{
+		"quotes":      quotes,
+		"total":       total,
+		"page":        page,
+		"page_size":   pageSize,
+		"total_pages": (total + pageSize - 1) / pageSize,
+		"channels":    channels,
+	})
 }

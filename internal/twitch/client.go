@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"twitchbot/internal/config"
+	"twitchbot/internal/database"
 	"twitchbot/internal/markov"
 )
 
@@ -313,6 +314,8 @@ func (c *Client) handleMessage(raw string) {
 			response := c.brain.ProcessMessage(msg.Content, msg.Username, c.cfg.GetBotUsername(), generator)
 			if response != "" {
 				c.SendMessage(response)
+				// Log the quote to database
+				database.SaveQuote(c.channel, response)
 			}
 		}
 
