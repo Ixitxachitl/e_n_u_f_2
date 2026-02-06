@@ -2,6 +2,7 @@ package markov
 
 import (
 	"database/sql"
+	"log"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -162,6 +163,9 @@ func (b *Brain) ProcessMessageWithInfo(message, username, botUsername string, gl
 	if b.containsBlacklistedWord(message) {
 		return result
 	}
+
+	// Normalize smart quotes and other Unicode to ASCII before learning
+	message = normalizeASCII(message)
 
 	// Learn from the message (always local)
 	b.learn(message)
@@ -451,7 +455,12 @@ func (b *Brain) CleanNonASCII() (rowsRemoved int) {
 	}
 	defer rows.Close()
 
-	var toDelete []int64
+	type transitionToDelete struct {
+		rowid              int64
+		word1, word2, next string
+	}
+	var toDelete []transitionToDelete
+
 	for rows.Next() {
 		var rowid int64
 		var word1, word2, nextWord string
@@ -461,14 +470,26 @@ func (b *Brain) CleanNonASCII() (rowsRemoved int) {
 
 		// Check if any word contains non-ASCII
 		if containsNonASCII(word1) || containsNonASCII(word2) || containsNonASCII(nextWord) {
-			toDelete = append(toDelete, rowid)
+			toDelete = append(toDelete, transitionToDelete{rowid, word1, word2, nextWord})
 		}
 	}
 
-	// Delete in batches
-	for _, rowid := range toDelete {
-		_, err := b.db.Exec(`DELETE FROM transitions WHERE rowid = ?`, rowid)
+	// Delete and log each removed transition
+	for _, t := range toDelete {
+		_, err := b.db.Exec(`DELETE FROM transitions WHERE rowid = ?`, t.rowid)
 		if err == nil {
+			// Find and log the offending word(s)
+			var badWords []string
+			if containsNonASCII(t.word1) {
+				badWords = append(badWords, t.word1)
+			}
+			if containsNonASCII(t.word2) {
+				badWords = append(badWords, t.word2)
+			}
+			if containsNonASCII(t.next) {
+				badWords = append(badWords, t.next)
+			}
+			log.Printf("[%s] Removed non-ASCII transition: %q -> %q -> %q (bad: %v)", b.Channel, t.word1, t.word2, t.next, badWords)
 			rowsRemoved++
 		}
 	}
@@ -484,6 +505,50 @@ func containsNonASCII(s string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeASCII converts common Unicode characters to their ASCII equivalents
+// Smart quotes, dashes, ellipses, etc. are converted to standard ASCII
+func normalizeASCII(s string) string {
+	replacements := map[rune]string{
+		// Smart quotes
+		'\u2018': "'",  // Left single quote
+		'\u2019': "'",  // Right single quote (apostrophe)
+		'\u201A': "'",  // Single low quote
+		'\u201B': "'",  // Single high-reversed quote
+		'\u2032': "'",  // Prime
+		'\u2035': "'",  // Reversed prime
+		'\u201C': "\"", // Left double quote
+		'\u201D': "\"", // Right double quote
+		'\u201E': "\"", // Double low quote
+		'\u201F': "\"", // Double high-reversed quote
+		'\u2033': "\"", // Double prime
+		'\u2036': "\"", // Reversed double prime
+		// Dashes
+		'\u2010': "-", // Hyphen
+		'\u2011': "-", // Non-breaking hyphen
+		'\u2012': "-", // Figure dash
+		'\u2013': "-", // En dash
+		'\u2014': "-", // Em dash
+		'\u2015': "-", // Horizontal bar
+		// Ellipsis
+		'\u2026': "...", // Horizontal ellipsis
+		// Spaces
+		'\u00A0': " ", // Non-breaking space
+		'\u2002': " ", // En space
+		'\u2003': " ", // Em space
+		'\u2009': " ", // Thin space
+	}
+
+	var result strings.Builder
+	for _, r := range s {
+		if replacement, ok := replacements[r]; ok {
+			result.WriteString(replacement)
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
 }
 
 // Erase clears all brain data but keeps the database file
