@@ -400,16 +400,39 @@ func (b *Brain) Clean() (rowsRemoved int) {
 	defer b.mu.Unlock()
 
 	for _, word := range blacklist {
-		// Use LIKE for partial matching and LOWER for case-insensitive
-		pattern := "%" + strings.ToLower(word) + "%"
-		result, _ := b.db.Exec(`
-			DELETE FROM transitions 
-			WHERE LOWER(word1) LIKE ? OR LOWER(word2) LIKE ? OR LOWER(next_word) LIKE ?
-		`, pattern, pattern, pattern)
+		// Check if this is a multi-word phrase
+		words := strings.Fields(word)
+		
+		if len(words) >= 2 {
+			// Multi-word phrase: match sequential words across columns
+			// For "bad word", delete where (word1="bad" AND word2="word") OR (word2="bad" AND next_word="word")
+			for i := 0; i < len(words)-1; i++ {
+				w1 := strings.ToLower(words[i])
+				w2 := strings.ToLower(words[i+1])
+				
+				result, _ := b.db.Exec(`
+					DELETE FROM transitions 
+					WHERE (LOWER(word1) = ? AND LOWER(word2) = ?)
+					   OR (LOWER(word2) = ? AND LOWER(next_word) = ?)
+				`, w1, w2, w1, w2)
 
-		if result != nil {
-			affected, _ := result.RowsAffected()
-			rowsRemoved += int(affected)
+				if result != nil {
+					affected, _ := result.RowsAffected()
+					rowsRemoved += int(affected)
+				}
+			}
+		} else {
+			// Single word: use LIKE for partial matching
+			pattern := "%" + strings.ToLower(word) + "%"
+			result, _ := b.db.Exec(`
+				DELETE FROM transitions 
+				WHERE LOWER(word1) LIKE ? OR LOWER(word2) LIKE ? OR LOWER(next_word) LIKE ?
+			`, pattern, pattern, pattern)
+
+			if result != nil {
+				affected, _ := result.RowsAffected()
+				rowsRemoved += int(affected)
+			}
 		}
 	}
 
@@ -627,6 +650,24 @@ func containsLink(text string) bool {
 		".co",
 		".me",
 		".be",
+		".ru",
+		".xyz",
+		".info",
+		".link",
+		".click",
+		".site",
+		".online",
+		".top",
+		".ly",
+		".gl",
+		".to",
+		".live",
+		".stream",
+		".uk",
+		".de",
+		".fr",
+		".shop",
+		".store",
 	}
 	for _, pattern := range linkPatterns {
 		if strings.Contains(lower, pattern) {
