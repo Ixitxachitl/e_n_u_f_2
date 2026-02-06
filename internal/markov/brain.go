@@ -402,14 +402,14 @@ func (b *Brain) Clean() (rowsRemoved int) {
 	for _, word := range blacklist {
 		// Check if this is a multi-word phrase
 		words := strings.Fields(word)
-		
+
 		if len(words) >= 2 {
 			// Multi-word phrase: match sequential words across columns
 			// For "bad word", delete where (word1="bad" AND word2="word") OR (word2="bad" AND next_word="word")
 			for i := 0; i < len(words)-1; i++ {
 				w1 := strings.ToLower(words[i])
 				w2 := strings.ToLower(words[i+1])
-				
+
 				result, _ := b.db.Exec(`
 					DELETE FROM transitions 
 					WHERE (LOWER(word1) = ? AND LOWER(word2) = ?)

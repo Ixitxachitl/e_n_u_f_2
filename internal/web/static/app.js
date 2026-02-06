@@ -375,11 +375,11 @@ function setupEventListeners() {
     // Client ID input enables/disables login button
     elements.clientId.addEventListener('input', updateLoginButtonState);
 
-    // Interval slider
+    // Interval slider - update display on input, save on release
     elements.intervalSlider.addEventListener('input', () => {
         elements.intervalValue.textContent = elements.intervalSlider.value;
     });
-    document.getElementById('save-interval-btn').addEventListener('click', saveInterval);
+    elements.intervalSlider.addEventListener('change', saveInterval);
 
     // Self-join toggle
     elements.allowSelfJoin.addEventListener('change', async () => {
@@ -1132,7 +1132,6 @@ async function loadActivity() {
 async function saveInterval() {
     const interval = parseInt(elements.intervalSlider.value);
     await api.put('/api/config', { message_interval: interval });
-    alert('Interval saved!');
 }
 
 async function addChannel() {
