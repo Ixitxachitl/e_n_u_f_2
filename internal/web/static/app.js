@@ -336,6 +336,10 @@ function cacheElements() {
     elements.channelsPagination = document.getElementById('channels-pagination');
     elements.brainSearch = document.getElementById('brain-search');
     elements.brainsPagination = document.getElementById('brains-pagination');
+    elements.quotesSearch = document.getElementById('quotes-search');
+    elements.quotesChannelFilter = document.getElementById('quotes-channel-filter');
+    elements.adminQuotesList = document.getElementById('admin-quotes-list');
+    elements.adminQuotesPagination = document.getElementById('admin-quotes-pagination');
 }
 
 // Tab Navigation
@@ -419,6 +423,22 @@ function setupEventListeners() {
     // Brain editor
     document.getElementById('transition-search').addEventListener('keypress', e => {
         if (e.key === 'Enter') searchTransitions();
+    });
+
+    // Quotes editor
+    let quotesSearchTimeout;
+    elements.quotesSearch.addEventListener('input', () => {
+        clearTimeout(quotesSearchTimeout);
+        quotesSearchTimeout = setTimeout(() => {
+            quotesState.page = 1;
+            quotesState.search = elements.quotesSearch.value.trim();
+            loadAdminQuotes();
+        }, 300);
+    });
+    elements.quotesChannelFilter.addEventListener('change', () => {
+        quotesState.page = 1;
+        quotesState.channel = elements.quotesChannelFilter.value;
+        loadAdminQuotes();
     });
 
     // Change password
@@ -523,7 +543,8 @@ async function loadInitialData() {
         loadBlacklist(),
         loadIgnoredUsers(),
         loadDatabaseStats(),
-        loadActivity()
+        loadActivity(),
+        loadAdminQuotes()
     ]);
 }
 
@@ -1219,9 +1240,14 @@ async function removeIgnoredUser(username) {
 }
 
 async function optimizeDatabase() {
-    await api.post('/api/database', {});
-    alert('Database optimized!');
+    const result = await api.post('/api/database', {});
+    let msg = 'Database optimized!';
+    if (result.non_ascii_removed > 0) {
+        msg += `\nRemoved ${result.non_ascii_removed} transitions with non-ASCII characters.`;
+    }
+    alert(msg);
     loadDatabaseStats();
+    loadBrains();
 }
 
 async function cleanAllBrains() {
@@ -1409,6 +1435,112 @@ async function updateTransitionCount(word1, word2, nextWord, count) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ word1, word2, next_word: nextWord, count: newCount })
     });
+}
+
+// Quotes Editor
+let quotesState = {
+    page: 1,
+    pageSize: 20,
+    search: '',
+    channel: '',
+    total: 0
+};
+
+async function loadAdminQuotes() {
+    const params = new URLSearchParams({
+        page: quotesState.page,
+        pageSize: quotesState.pageSize,
+        sort: 'newest'
+    });
+    if (quotesState.search) params.set('search', quotesState.search);
+    if (quotesState.channel) params.set('channel', quotesState.channel);
+
+    const result = await api.get(`/api/quotes?${params}`);
+    quotesState.total = result.total;
+
+    // Update channel filter options
+    const channelSelect = elements.quotesChannelFilter;
+    const currentChannel = channelSelect.value;
+    channelSelect.innerHTML = '<option value="">All Channels</option>';
+    (result.channels || []).forEach(ch => {
+        const opt = document.createElement('option');
+        opt.value = ch;
+        opt.textContent = ch;
+        if (ch === currentChannel) opt.selected = true;
+        channelSelect.appendChild(opt);
+    });
+
+    renderAdminQuotes(result);
+}
+
+function renderAdminQuotes(result) {
+    const list = elements.adminQuotesList;
+
+    if (!result.quotes || result.quotes.length === 0) {
+        list.innerHTML = '<div class="empty-state">No quotes found</div>';
+        elements.adminQuotesPagination.innerHTML = '';
+        return;
+    }
+
+    list.innerHTML = result.quotes.map(q => {
+        const date = new Date(q.created_at).toLocaleString();
+        const votes = q.votes || 0;
+        return `
+            <div class="list-item quote-item" data-id="${q.id}">
+                <div class="item-info">
+                    <div class="quote-message">${escapeHtml(q.message)}</div>
+                    <div class="item-meta">${q.channel} • ${date} • 👍 ${votes}</div>
+                </div>
+                <div class="actions">
+                    <button class="btn" onclick="editQuote(${q.id}, '${escapeHtml(q.message).replace(/'/g, "\\'")}')">Edit</button>
+                    <button class="btn danger" onclick="deleteQuote(${q.id})">Delete</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    // Render pagination
+    const maxPages = Math.ceil(result.total / quotesState.pageSize) || 1;
+    elements.adminQuotesPagination.innerHTML = renderQuotesPagination(maxPages);
+}
+
+function renderQuotesPagination(maxPages) {
+    if (maxPages <= 1) return '';
+
+    let html = '';
+    html += `<button class="btn" onclick="goToQuotesPage(${quotesState.page - 1})" ${quotesState.page <= 1 ? 'disabled' : ''}>&laquo; Prev</button>`;
+    html += `<span class="page-info">Page ${quotesState.page} of ${maxPages}</span>`;
+    html += `<button class="btn" onclick="goToQuotesPage(${quotesState.page + 1})" ${quotesState.page >= maxPages ? 'disabled' : ''}>Next &raquo;</button>`;
+    return html;
+}
+
+function goToQuotesPage(page) {
+    const maxPages = Math.ceil(quotesState.total / quotesState.pageSize);
+    if (page < 1 || page > maxPages) return;
+    quotesState.page = page;
+    loadAdminQuotes();
+}
+
+async function deleteQuote(quoteId) {
+    if (!confirm('Delete this quote?')) return;
+
+    await fetch(`/api/admin/quotes/${quoteId}`, { method: 'DELETE' });
+    loadAdminQuotes();
+}
+
+function editQuote(quoteId, currentMessage) {
+    const newMessage = prompt('Edit quote:', currentMessage);
+    if (newMessage === null || newMessage === currentMessage) return;
+    if (newMessage.trim() === '') {
+        alert('Quote cannot be empty');
+        return;
+    }
+
+    fetch(`/api/admin/quotes/${quoteId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: newMessage.trim() })
+    }).then(() => loadAdminQuotes());
 }
 
 // Utilities

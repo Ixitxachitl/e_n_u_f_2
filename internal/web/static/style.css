@@ -595,6 +595,23 @@ input[type="password"]::placeholder {
     word-wrap: break-word;
 }
 
+/* Quote item styles */
+.quote-item .item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.quote-item .quote-message {
+    font-size: 0.95rem;
+    word-wrap: break-word;
+    margin-bottom: 4px;
+}
+
+.quote-item .item-meta {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
 /* Live channel countdown styles */
 .live-channel-item {
     display: flex;

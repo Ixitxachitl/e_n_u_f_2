@@ -320,3 +320,23 @@ func GetQuoteVoteCount(quoteID int64) (int, error) {
 	err := db.QueryRow("SELECT COUNT(*) FROM quote_votes WHERE quote_id = ?", quoteID).Scan(&count)
 	return count, err
 }
+
+// DeleteQuote deletes a quote by ID (cascades to votes)
+func DeleteQuote(quoteID int64) error {
+	if db == nil {
+		return nil
+	}
+
+	_, err := db.Exec("DELETE FROM quotes WHERE id = ?", quoteID)
+	return err
+}
+
+// UpdateQuote updates a quote's message
+func UpdateQuote(quoteID int64, message string) error {
+	if db == nil {
+		return nil
+	}
+
+	_, err := db.Exec("UPDATE quotes SET message = ? WHERE id = ?", message, quoteID)
+	return err
+}

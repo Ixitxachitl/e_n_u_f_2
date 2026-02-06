@@ -207,6 +207,19 @@ func (m *Manager) OptimizeAll() {
 	}
 }
 
+// CleanNonASCIIAll removes non-ASCII transitions from all brains
+func (m *Manager) CleanNonASCIIAll() int {
+	stats := m.ListBrains()
+	totalRemoved := 0
+	for _, stat := range stats {
+		brain := m.GetBrain(stat.Channel)
+		if brain != nil {
+			totalRemoved += brain.CleanNonASCII()
+		}
+	}
+	return totalRemoved
+}
+
 // Close closes all brain database connections
 func (m *Manager) Close() {
 	m.mu.Lock()

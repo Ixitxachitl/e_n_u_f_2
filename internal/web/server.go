@@ -151,6 +151,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/database", s.authMiddleware(s.handleDatabase))
 	mux.HandleFunc("/api/activity", s.authMiddleware(s.handleActivity))
 	mux.HandleFunc("/api/logout", s.authMiddleware(s.handleLogout))
+	mux.HandleFunc("/api/admin/quotes/", s.authMiddleware(s.handleAdminQuote)) // Admin quote management
 	mux.HandleFunc("/ws", s.authMiddleware(s.handleWebSocket))
 
 	// Public API routes (no auth required)
@@ -1116,13 +1117,23 @@ func (s *Server) handleDatabase(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, stats)
 
 	case http.MethodPost:
+		// Clean non-ASCII transitions from all brains
+		nonASCIIRemoved := s.manager.GetBrainManager().CleanNonASCIIAll()
+
 		// Vacuum/optimize database
 		db := database.GetDB()
 		if _, err := db.Exec("VACUUM"); err != nil {
 			httpError(w, "Failed to optimize database", http.StatusInternalServerError)
 			return
 		}
-		jsonResponse(w, map[string]string{"status": "optimized"})
+
+		// Optimize all brain databases too
+		s.manager.GetBrainManager().OptimizeAll()
+
+		jsonResponse(w, map[string]interface{}{
+			"status":            "optimized",
+			"non_ascii_removed": nonASCIIRemoved,
+		})
 
 	case http.MethodDelete:
 		// Clean all brains
@@ -1677,4 +1688,45 @@ func (s *Server) handlePublicClientID(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]interface{}{
 		"client_id": clientID,
 	})
+}
+
+// handleAdminQuote handles admin operations on quotes (delete, update)
+func (s *Server) handleAdminQuote(w http.ResponseWriter, r *http.Request) {
+	// Extract quote ID from path: /api/admin/quotes/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/admin/quotes/")
+	var quoteID int64
+	if _, err := fmt.Sscanf(path, "%d", &quoteID); err != nil {
+		httpError(w, "Invalid quote ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		if err := database.DeleteQuote(quoteID); err != nil {
+			httpError(w, "Failed to delete quote", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{"status": "deleted"})
+
+	case http.MethodPut:
+		var req struct {
+			Message string `json:"message"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpError(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Message == "" {
+			httpError(w, "Message is required", http.StatusBadRequest)
+			return
+		}
+		if err := database.UpdateQuote(quoteID, req.Message); err != nil {
+			httpError(w, "Failed to update quote", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{"status": "updated"})
+
+	default:
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }

@@ -439,6 +439,53 @@ func (b *Brain) Clean() (rowsRemoved int) {
 	return rowsRemoved
 }
 
+// CleanNonASCII removes all transitions containing non-ASCII characters
+func (b *Brain) CleanNonASCII() (rowsRemoved int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Get all transitions
+	rows, err := b.db.Query(`SELECT rowid, word1, word2, next_word FROM transitions`)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+
+	var toDelete []int64
+	for rows.Next() {
+		var rowid int64
+		var word1, word2, nextWord string
+		if err := rows.Scan(&rowid, &word1, &word2, &nextWord); err != nil {
+			continue
+		}
+
+		// Check if any word contains non-ASCII
+		if containsNonASCII(word1) || containsNonASCII(word2) || containsNonASCII(nextWord) {
+			toDelete = append(toDelete, rowid)
+		}
+	}
+
+	// Delete in batches
+	for _, rowid := range toDelete {
+		_, err := b.db.Exec(`DELETE FROM transitions WHERE rowid = ?`, rowid)
+		if err == nil {
+			rowsRemoved++
+		}
+	}
+
+	return rowsRemoved
+}
+
+// containsNonASCII checks if a string contains any non-ASCII characters
+func containsNonASCII(s string) bool {
+	for _, r := range s {
+		if r > 127 {
+			return true
+		}
+	}
+	return false
+}
+
 // Erase clears all brain data but keeps the database file
 func (b *Brain) Erase() error {
 	b.mu.Lock()
@@ -615,23 +662,15 @@ func (b *Brain) containsBlacklistedWord(message string) bool {
 }
 
 func isMostlyEnglish(text string) bool {
-	englishCount := 0
-	totalCount := 0
-
 	for _, r := range text {
 		if unicode.IsLetter(r) {
-			totalCount++
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				englishCount++
+			// Reject any non-ASCII letter (accented characters, non-Latin scripts)
+			if r > 127 {
+				return false
 			}
 		}
 	}
-
-	if totalCount == 0 {
-		return false
-	}
-
-	return float64(englishCount)/float64(totalCount) >= 0.7
+	return true
 }
 
 func containsLink(text string) bool {
