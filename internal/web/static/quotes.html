@@ -690,6 +690,8 @@
             try {
                 const res = await fetch(API_BASE + '/api/quotes?page=1&pageSize=1');
                 const data = await res.json();
+                document.getElementById('stat-channels').textContent = formatNumber(data.channel_count || 0);
+                document.getElementById('stat-transitions').textContent = formatNumber(data.total_transitions || 0);
                 document.getElementById('stat-quotes').textContent = formatNumber(data.total || 0);
             } catch (e) {
                 // Ignore
