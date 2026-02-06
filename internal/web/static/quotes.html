@@ -187,14 +187,45 @@
             padding: 10px 20px;
             color: var(--text-secondary);
         }
-        .stats {
-            text-align: center;
-            color: var(--text-secondary);
-            margin-bottom: 20px;
-        }
         .empty {
             text-align: center;
             padding: 40px;
+            color: var(--text-secondary);
+        }
+        .new-quote {
+            animation: slideIn 0.5s ease-out;
+            border-color: var(--accent);
+        }
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .bot-stats {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .stat-label {
+            font-size: 0.85rem;
             color: var(--text-secondary);
         }
     </style>
@@ -208,6 +239,20 @@
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
                     Login with Twitch
                 </a>
+            </div>
+        </div>
+        <div class="bot-stats">
+            <div class="stat-item">
+                <div class="stat-value" id="stat-channels">-</div>
+                <div class="stat-label">Channels</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="stat-transitions">-</div>
+                <div class="stat-label">Transitions</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="stat-quotes">-</div>
+                <div class="stat-label">Quotes</div>
             </div>
         </div>
         <div id="login-hint" class="login-hint" style="display: none;">
@@ -224,7 +269,6 @@
                 <option value="most_votes">Most +1s</option>
             </select>
         </div>
-        <div id="stats" class="stats"></div>
         <div id="quotes" class="quote-list"></div>
         <div id="pagination" class="pagination"></div>
     </div>
@@ -412,7 +456,9 @@
             });
             
             // Update stats
-            document.getElementById('stats').textContent = data.total + ' quotes found';
+            document.getElementById('stat-channels').textContent = formatNumber(data.channel_count || 0);
+            document.getElementById('stat-transitions').textContent = formatNumber(data.total_transitions || 0);
+            document.getElementById('stat-quotes').textContent = formatNumber(data.total || 0);
             
             // Render quotes
             const container = document.getElementById('quotes');
@@ -510,6 +556,125 @@
             return div.innerHTML;
         }
         
+        function formatNumber(num) {
+            if (num >= 1000000) {
+                return (num / 1000000).toFixed(1) + 'M';
+            } else if (num >= 1000) {
+                return (num / 1000).toFixed(1) + 'K';
+            }
+            return num.toLocaleString();
+        }
+        
+        // WebSocket for live updates
+        let ws = null;
+        let wsRetryCount = 0;
+        
+        function connectWebSocket() {
+            // Determine WebSocket URL
+            let wsUrl;
+            if (API_BASE) {
+                // Remote hosting - connect to bot's WebSocket
+                wsUrl = API_BASE.replace('https://', 'wss://').replace('http://', 'ws://') + '/ws/public';
+            } else {
+                // Hosted on bot - use relative path
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                wsUrl = protocol + '//' + window.location.host + '/ws/public';
+            }
+            
+            try {
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    wsRetryCount = 0;
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.event === 'new_quote') {
+                            handleNewQuote(msg.data);
+                        }
+                    } catch (e) {
+                        console.error('WebSocket message error:', e);
+                    }
+                };
+                
+                ws.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    // Reconnect with exponential backoff
+                    const delay = Math.min(1000 * Math.pow(2, wsRetryCount), 30000);
+                    wsRetryCount++;
+                    setTimeout(connectWebSocket, delay);
+                };
+                
+                ws.onerror = (err) => {
+                    console.error('WebSocket error:', err);
+                };
+            } catch (e) {
+                console.error('Failed to create WebSocket:', e);
+            }
+        }
+        
+        function handleNewQuote(quote) {
+            // Only add if on first page and sorting by newest
+            const sort = document.getElementById('sort').value;
+            const channel = document.getElementById('channel').value;
+            const search = document.getElementById('search').value;
+            
+            if (currentPage !== 1 || sort !== 'newest') {
+                // Just show a notification or refresh stats
+                updateStats();
+                return;
+            }
+            
+            // Check if quote matches current filters
+            if (channel && quote.channel !== channel) return;
+            if (search && !quote.message.toLowerCase().includes(search.toLowerCase())) return;
+            
+            // Add quote to top of list with animation
+            const container = document.getElementById('quotes');
+            const emptyMsg = container.querySelector('.empty');
+            if (emptyMsg) {
+                container.innerHTML = '';
+            }
+            
+            const date = new Date(quote.created_at).toLocaleString();
+            const quoteHtml = `<div class="quote new-quote" data-id="${quote.id || 'new'}">
+                <div class="quote-text">${escapeHtml(quote.message)}</div>
+                <div class="quote-footer">
+                    <div class="quote-meta">
+                        <span class="quote-channel">#${escapeHtml(quote.channel)}</span>
+                        <span> • ${date}</span>
+                    </div>
+                    <button class="vote-btn" onclick="toggleVote(${quote.id || 0}, false)" ${!twitchUser ? 'disabled title="Login to vote"' : ''}>
+                        <span>👍</span>
+                        <span class="vote-count" id="votes-${quote.id || 'new'}">0</span>
+                    </button>
+                </div>
+            </div>`;
+            
+            container.insertAdjacentHTML('afterbegin', quoteHtml);
+            
+            // Remove animation class after animation completes
+            setTimeout(() => {
+                const newEl = container.querySelector('.new-quote');
+                if (newEl) newEl.classList.remove('new-quote');
+            }, 500);
+            
+            updateStats();
+        }
+        
+        async function updateStats() {
+            try {
+                const res = await fetch(API_BASE + '/api/quotes?page=1&pageSize=1');
+                const data = await res.json();
+                document.getElementById('stat-quotes').textContent = formatNumber(data.total || 0);
+            } catch (e) {
+                // Ignore
+            }
+        }
+        
         document.getElementById('search').addEventListener('input', () => {
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => { currentPage = 1; loadQuotes(); }, 300);
@@ -526,7 +691,10 @@
         });
         
         // Initialize
-        initAuth().then(() => loadQuotes());
+        initAuth().then(() => {
+            loadQuotes();
+            connectWebSocket();
+        });
     </script>
 </body>
 </html>

@@ -28,6 +28,16 @@ A multi-channel Twitch chat bot written in Go with Markov chain text generation,
 - **Live Channel Dashboard**: View currently live channels with stream info, viewer count, and countdown
 - **Profile Images**: Channel avatars displayed throughout the UI
 - **Database Editor**: Browse and edit Markov transitions with pagination and search
+- **Generation Logging**: Activity feed shows generation attempts with success/failure status
+
+### Public Quotes Page
+- **Quotes API**: Public endpoint to view all bot-generated messages
+- **Search & Filter**: Search quotes by text, filter by channel
+- **Sorting Options**: Sort by newest, oldest, or most +1s
+- **Live Updates**: New quotes appear in real-time via WebSocket
+- **Bot Stats**: Display channel count, total transitions, and quote count
+- **+1 Voting**: Users can upvote favorite quotes with Twitch login
+- **Remote Hosting**: Can be hosted externally with API_BASE configuration
 
 ### Windows Launcher
 - **Embedded Browser**: Native Windows app with embedded WebView2 browser
@@ -129,9 +139,22 @@ All configuration is done via the Web UI at `https://localhost:24601`.
 
 ### Data Storage
 
-- Main database: `~/.twitchbot/twitchbot.db` (config, channels, blacklists, user mappings)
+- Main database: `~/.twitchbot/twitchbot.db` (config, channels, blacklists, user mappings, quotes)
 - Per-channel brains: `~/.twitchbot/brains/<channel>.db`
 - TLS certificates: `~/.twitchbot/cert.pem`, `~/.twitchbot/key.pem`
+
+### Public Access (Optional)
+
+To expose the quotes page publicly with a valid SSL certificate:
+
+1. Set up DuckDNS or similar dynamic DNS pointing to your IP
+2. Forward port 24601 on your router
+3. Use certbot to get Let's Encrypt certificates:
+   ```bash
+   sudo certbot certonly --manual --preferred-challenges dns -d yourdomain.duckdns.org
+   ```
+4. Copy certificates to `~/.twitchbot/cert.pem` and `~/.twitchbot/key.pem`
+5. Add your public URL to Twitch OAuth Redirect URLs for voting support
 
 ## Chat Commands
 
@@ -204,6 +227,15 @@ All configuration is done via the Web UI at `https://localhost:24601`.
 | DELETE | `/api/database` | Clean all brains |
 | GET | `/api/activity` | Get recent activity log |
 
+### Public Endpoints (no auth required)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/quotes` | List quotes with search, filter, sort, pagination |
+| POST | `/api/quotes/{id}/vote` | Add +1 vote (requires Twitch user ID) |
+| DELETE | `/api/quotes/{id}/vote` | Remove +1 vote |
+| GET | `/api/public/client-id` | Get OAuth client ID for Twitch login |
+| WS | `/ws/public` | WebSocket for live quote updates |
+
 ## Database Schema
 
 ### Main Database (`twitchbot.db`)
@@ -212,6 +244,8 @@ All configuration is done via the Web UI at `https://localhost:24601`.
 - `blacklist`: Blacklisted words
 - `user_blacklist`: Ignored users
 - `twitch_users`: User ID to username mappings (for detecting name changes)
+- `quotes`: Bot-generated messages log
+- `quote_votes`: +1 votes on quotes (linked to Twitch user IDs)
 
 ### Per-Channel Databases (`brains/<channel>.db`)
 - `transitions`: Markov chain word transitions (word1, word2, next_word, count)

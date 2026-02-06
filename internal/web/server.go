@@ -38,12 +38,13 @@ var staticFiles embed.FS
 
 // Server represents the web UI server
 type Server struct {
-	cfg      *config.Config
-	manager  *twitch.Manager
-	server   *http.Server
-	upgrader websocket.Upgrader
-	clients  map[*websocket.Conn]bool
-	mu       sync.Mutex
+	cfg           *config.Config
+	manager       *twitch.Manager
+	server        *http.Server
+	upgrader      websocket.Upgrader
+	clients       map[*websocket.Conn]bool
+	publicClients map[*websocket.Conn]bool
+	mu            sync.Mutex
 }
 
 // NewServer creates a new web server
@@ -54,7 +55,8 @@ func NewServer(cfg *config.Config, manager *twitch.Manager) *Server {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		clients: make(map[*websocket.Conn]bool),
+		clients:       make(map[*websocket.Conn]bool),
+		publicClients: make(map[*websocket.Conn]bool),
 	}
 
 	// Set up event handler for real-time updates
@@ -155,6 +157,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/quotes", s.handleQuotes)
 	mux.HandleFunc("/api/quotes/", s.handleQuoteVote) // /api/quotes/{id}/vote
 	mux.HandleFunc("/api/public/client-id", s.handlePublicClientID)
+	mux.HandleFunc("/ws/public", s.handlePublicWebSocket) // Public WebSocket for quotes page
 
 	// Static files (always accessible - login page needs to load)
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -1166,6 +1169,37 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handlePublicWebSocket handles WebSocket connections for the public quotes page
+func (s *Server) handlePublicWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Set CORS headers for WebSocket handshake
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Public WebSocket upgrade error: %v", err)
+		return
+	}
+
+	s.mu.Lock()
+	s.publicClients[conn] = true
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.publicClients, conn)
+		s.mu.Unlock()
+		conn.Close()
+	}()
+
+	// Keep connection alive
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+	}
+}
+
 func (s *Server) broadcastEvent(event string, data interface{}) {
 	// Save message events to activity log
 	if event == "message" {
@@ -1194,6 +1228,13 @@ func (s *Server) broadcastEvent(event string, data interface{}) {
 			var message string
 			if success {
 				message = "🤖 Generated: \"" + response + "\""
+
+				// Also broadcast a new_quote event for the quotes page
+				go func() {
+					// Small delay to ensure database has the quote
+					time.Sleep(100 * time.Millisecond)
+					s.broadcastNewQuote(channel, response)
+				}()
 			} else {
 				reasons := map[string]string{
 					"empty_generation": "empty output",
@@ -1230,6 +1271,41 @@ func (s *Server) broadcastEvent(event string, data interface{}) {
 		if err := client.WriteJSON(msg); err != nil {
 			client.Close()
 			delete(s.clients, client)
+		}
+	}
+
+	// Also broadcast to public clients
+	for client := range s.publicClients {
+		if err := client.WriteJSON(msg); err != nil {
+			client.Close()
+			delete(s.publicClients, client)
+		}
+	}
+}
+
+// broadcastNewQuote sends a new quote event to all connected clients
+func (s *Server) broadcastNewQuote(channel, message string) {
+	quote := map[string]interface{}{
+		"channel":    channel,
+		"message":    message,
+		"created_at": time.Now().Format(time.RFC3339),
+		"votes":      0,
+		"user_voted": false,
+	}
+
+	msg := map[string]interface{}{
+		"event": "new_quote",
+		"data":  quote,
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Broadcast to public WebSocket clients
+	for client := range s.publicClients {
+		if err := client.WriteJSON(msg); err != nil {
+			client.Close()
+			delete(s.publicClients, client)
 		}
 	}
 }
@@ -1481,14 +1557,29 @@ func (s *Server) handleQuotes(w http.ResponseWriter, r *http.Request) {
 
 	channels, _ := database.GetQuoteChannels()
 
+	// Get channel and transition stats for the public page
+	allChannels := s.cfg.GetChannels()
+	channelCount := len(allChannels)
+
+	// Get total transitions from all brains
+	totalTransitions := 0
+	if s.manager != nil && s.manager.GetBrainManager() != nil {
+		brainStats := s.manager.GetBrainManager().ListBrains()
+		for _, bs := range brainStats {
+			totalTransitions += bs.TotalEntries
+		}
+	}
+
 	jsonResponse(w, map[string]interface{}{
-		"quotes":       quotes,
-		"total":        total,
-		"page":         page,
-		"page_size":    pageSize,
-		"total_pages":  (total + pageSize - 1) / pageSize,
-		"channels":     channels,
-		"bot_username": s.cfg.GetBotUsername(),
+		"quotes":            quotes,
+		"total":             total,
+		"page":              page,
+		"page_size":         pageSize,
+		"total_pages":       (total + pageSize - 1) / pageSize,
+		"channels":          channels,
+		"bot_username":      s.cfg.GetBotUsername(),
+		"channel_count":     channelCount,
+		"total_transitions": totalTransitions,
 	})
 }
 
