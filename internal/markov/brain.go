@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	_ "modernc.org/sqlite"
 
@@ -283,6 +282,11 @@ func (b *Brain) learn(message string) {
 		word2 := words[i+1]
 		nextWord := words[i+2]
 
+		// Skip loop transitions (all three words the same) to avoid infinite loops
+		if word1 == word2 && word2 == nextWord {
+			continue
+		}
+
 		// Insert or update count
 		b.db.Exec(`
 			INSERT INTO transitions (word1, word2, next_word, count)
@@ -443,7 +447,8 @@ func (b *Brain) Clean() (rowsRemoved int) {
 	return rowsRemoved
 }
 
-// CleanNonASCII removes all transitions containing non-ASCII characters
+// CleanNonASCII removes transitions containing non-ASCII characters (excluding emoji)
+// and also removes loop transitions where all three words are the same
 func (b *Brain) CleanNonASCII() (rowsRemoved int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -458,6 +463,7 @@ func (b *Brain) CleanNonASCII() (rowsRemoved int) {
 	type transitionToDelete struct {
 		rowid              int64
 		word1, word2, next string
+		reason             string
 	}
 	var toDelete []transitionToDelete
 
@@ -468,9 +474,15 @@ func (b *Brain) CleanNonASCII() (rowsRemoved int) {
 			continue
 		}
 
-		// Check if any word contains non-ASCII
+		// Check for loop (all three words are the same)
+		if word1 == word2 && word2 == nextWord {
+			toDelete = append(toDelete, transitionToDelete{rowid, word1, word2, nextWord, "loop"})
+			continue
+		}
+
+		// Check if any word contains non-ASCII (excluding emoji)
 		if containsNonASCII(word1) || containsNonASCII(word2) || containsNonASCII(nextWord) {
-			toDelete = append(toDelete, transitionToDelete{rowid, word1, word2, nextWord})
+			toDelete = append(toDelete, transitionToDelete{rowid, word1, word2, nextWord, "non-ascii"})
 		}
 	}
 
@@ -478,18 +490,22 @@ func (b *Brain) CleanNonASCII() (rowsRemoved int) {
 	for _, t := range toDelete {
 		_, err := b.db.Exec(`DELETE FROM transitions WHERE rowid = ?`, t.rowid)
 		if err == nil {
-			// Find and log the offending word(s)
-			var badWords []string
-			if containsNonASCII(t.word1) {
-				badWords = append(badWords, t.word1)
+			if t.reason == "loop" {
+				log.Printf("[%s] Removed loop transition: %q -> %q -> %q", b.Channel, t.word1, t.word2, t.next)
+			} else {
+				// Find and log the offending word(s)
+				var badWords []string
+				if containsNonASCII(t.word1) {
+					badWords = append(badWords, t.word1)
+				}
+				if containsNonASCII(t.word2) {
+					badWords = append(badWords, t.word2)
+				}
+				if containsNonASCII(t.next) {
+					badWords = append(badWords, t.next)
+				}
+				log.Printf("[%s] Removed non-ASCII transition: %q -> %q -> %q (bad: %v)", b.Channel, t.word1, t.word2, t.next, badWords)
 			}
-			if containsNonASCII(t.word2) {
-				badWords = append(badWords, t.word2)
-			}
-			if containsNonASCII(t.next) {
-				badWords = append(badWords, t.next)
-			}
-			log.Printf("[%s] Removed non-ASCII transition: %q -> %q -> %q (bad: %v)", b.Channel, t.word1, t.word2, t.next, badWords)
 			rowsRemoved++
 		}
 	}
@@ -497,10 +513,39 @@ func (b *Brain) CleanNonASCII() (rowsRemoved int) {
 	return rowsRemoved
 }
 
-// containsNonASCII checks if a string contains any non-ASCII characters
+// isEmoji checks if a rune is an emoji character
+func isEmoji(r rune) bool {
+	// Common emoji ranges
+	return (r >= 0x1F300 && r <= 0x1F9FF) || // Miscellaneous Symbols and Pictographs, Emoticons, etc.
+		(r >= 0x2600 && r <= 0x26FF) || // Misc symbols (☀, ⚡, etc.)
+		(r >= 0x2700 && r <= 0x27BF) || // Dingbats (✂, ✓, etc.)
+		(r >= 0x1F600 && r <= 0x1F64F) || // Emoticons
+		(r >= 0x1F680 && r <= 0x1F6FF) || // Transport and Map
+		(r >= 0x1F1E0 && r <= 0x1F1FF) || // Flags
+		(r >= 0x231A && r <= 0x231B) || // Watch, Hourglass
+		(r >= 0x23E9 && r <= 0x23F3) || // Media control symbols
+		(r >= 0x25AA && r <= 0x25AB) || // Squares
+		(r >= 0x25B6 && r <= 0x25C0) || // Play buttons
+		(r >= 0x25FB && r <= 0x25FE) || // Squares
+		(r >= 0x2614 && r <= 0x2615) || // Umbrella, Hot Beverage
+		(r >= 0x2648 && r <= 0x2653) || // Zodiac
+		(r >= 0x267F && r <= 0x267F) || // Wheelchair
+		(r >= 0x2934 && r <= 0x2935) || // Arrows
+		(r >= 0x2B05 && r <= 0x2B07) || // Arrows
+		(r >= 0x2B1B && r <= 0x2B1C) || // Squares
+		(r >= 0x2B50 && r <= 0x2B50) || // Star
+		(r >= 0x2B55 && r <= 0x2B55) || // Circle
+		(r >= 0x3030 && r <= 0x3030) || // Wavy dash
+		(r >= 0x303D && r <= 0x303D) || // Part alternation mark
+		(r >= 0x3297 && r <= 0x3299) || // Circled Ideograph
+		(r >= 0xFE0F && r <= 0xFE0F) || // Variation selector
+		(r >= 0x200D && r <= 0x200D) // Zero width joiner (used in compound emoji)
+}
+
+// containsNonASCII checks if a string contains any non-ASCII characters (excluding emoji)
 func containsNonASCII(s string) bool {
 	for _, r := range s {
-		if r > 127 {
+		if r > 127 && !isEmoji(r) {
 			return true
 		}
 	}
@@ -728,11 +773,9 @@ func (b *Brain) containsBlacklistedWord(message string) bool {
 
 func isMostlyEnglish(text string) bool {
 	for _, r := range text {
-		if unicode.IsLetter(r) {
-			// Reject any non-ASCII letter (accented characters, non-Latin scripts)
-			if r > 127 {
-				return false
-			}
+		// Allow ASCII characters and emoji, reject everything else
+		if r > 127 && !isEmoji(r) {
+			return false
 		}
 	}
 	return true
