@@ -1557,6 +1557,9 @@ func (s *Server) handleQuotes(w http.ResponseWriter, r *http.Request) {
 
 	channels, _ := database.GetQuoteChannels()
 
+	// Get channel display names
+	displayNames := s.cfg.GetChannelDisplayNames()
+
 	// Get channel and transition stats for the public page
 	allChannels := s.cfg.GetChannels()
 	channelCount := len(allChannels)
@@ -1577,6 +1580,7 @@ func (s *Server) handleQuotes(w http.ResponseWriter, r *http.Request) {
 		"page_size":         pageSize,
 		"total_pages":       (total + pageSize - 1) / pageSize,
 		"channels":          channels,
+		"display_names":     displayNames,
 		"bot_username":      s.cfg.GetBotUsername(),
 		"channel_count":     channelCount,
 		"total_transitions": totalTransitions,

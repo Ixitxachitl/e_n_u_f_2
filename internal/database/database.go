@@ -151,6 +151,9 @@ func createTables() error {
 	// Migration: add use_global_brain column if it doesn't exist
 	db.Exec("ALTER TABLE channels ADD COLUMN use_global_brain INTEGER DEFAULT 0")
 
+	// Migration: add display_name column for proper capitalization
+	db.Exec("ALTER TABLE channels ADD COLUMN display_name TEXT")
+
 	// Insert default config values if not exists
 	defaults := map[string]string{
 		"client_id":        "",

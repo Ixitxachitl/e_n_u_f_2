@@ -131,6 +131,10 @@
         }
         .quote-channel {
             color: var(--accent);
+            text-decoration: none;
+        }
+        .quote-channel:hover {
+            text-decoration: underline;
         }
         .vote-btn {
             display: flex;
@@ -280,6 +284,7 @@
         let debounceTimer;
         let twitchUser = null;
         let clientId = null;
+        let displayNames = {}; // Map of channel login -> display name
         
         // Initialize auth - check for OAuth callback or stored user
         async function initAuth() {
@@ -447,10 +452,16 @@
             const channelSelect = document.getElementById('channel');
             const currentChannel = channelSelect.value;
             channelSelect.innerHTML = '<option value="">All Channels</option>';
+            
+            // Store display names from response
+            if (data.display_names) {
+                displayNames = data.display_names;
+            }
+            
             (data.channels || []).forEach(ch => {
                 const opt = document.createElement('option');
                 opt.value = ch;
-                opt.textContent = '#' + ch;
+                opt.textContent = getDisplayName(ch);
                 if (ch === currentChannel) opt.selected = true;
                 channelSelect.appendChild(opt);
             });
@@ -474,7 +485,7 @@
                         <div class="quote-text">${escapeHtml(q.message)}</div>
                         <div class="quote-footer">
                             <div class="quote-meta">
-                                <span class="quote-channel">#${escapeHtml(q.channel)}</span>
+                                <a href="https://twitch.tv/${encodeURIComponent(q.channel)}" target="_blank" class="quote-channel">${getDisplayName(q.channel)}</a>
                                 <span> • ${date}</span>
                             </div>
                             <button class="vote-btn ${votedClass}" onclick="toggleVote(${q.id}, ${q.user_voted ? 'true' : 'false'})" ${voteDisabled}>
@@ -554,6 +565,16 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+        
+        function capitalizeFirst(str) {
+            if (!str) return str;
+            return str.charAt(0).toUpperCase() + str.slice(1);
+        }
+        
+        function getDisplayName(channel) {
+            // Use cached display name, or fall back to capitalizing first letter
+            return displayNames[channel] || capitalizeFirst(channel);
         }
         
         function formatNumber(num) {
@@ -644,7 +665,7 @@
                 <div class="quote-text">${escapeHtml(quote.message)}</div>
                 <div class="quote-footer">
                     <div class="quote-meta">
-                        <span class="quote-channel">#${escapeHtml(quote.channel)}</span>
+                        <a href="https://twitch.tv/${encodeURIComponent(quote.channel)}" target="_blank" class="quote-channel">${getDisplayName(quote.channel)}</a>
                         <span> • ${date}</span>
                     </div>
                     <button class="vote-btn" onclick="toggleVote(${quote.id || 0}, false)" ${!twitchUser ? 'disabled title="Login to vote"' : ''}>

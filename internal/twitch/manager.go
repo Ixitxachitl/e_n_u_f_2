@@ -400,9 +400,14 @@ func (m *Manager) checkAndHandleUsernameChange(channel string) string {
 	}
 
 	// Look up user info from Twitch API
-	userID, currentUsername := m.lookupTwitchUser(channel, clientID, oauthToken)
+	userID, currentUsername, displayName := m.lookupTwitchUser(channel, clientID, oauthToken)
 	if userID == "" {
 		return channel
+	}
+
+	// Store the display name for this channel
+	if displayName != "" {
+		m.cfg.SetChannelDisplayName(currentUsername, displayName)
 	}
 
 	// Check if we have a stored username for this ID
@@ -426,10 +431,10 @@ func (m *Manager) checkAndHandleUsernameChange(channel string) string {
 }
 
 // lookupTwitchUser queries the Twitch API for user info
-func (m *Manager) lookupTwitchUser(username, clientID, oauthToken string) (userID, currentUsername string) {
+func (m *Manager) lookupTwitchUser(username, clientID, oauthToken string) (userID, currentUsername, displayName string) {
 	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users?login="+strings.ToLower(username), nil)
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 
 	token := strings.TrimPrefix(oauthToken, "oauth:")
@@ -441,32 +446,33 @@ func (m *Manager) lookupTwitchUser(username, clientID, oauthToken string) (userI
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error looking up Twitch user %s: %v", username, err)
-		return "", ""
+		return "", "", ""
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		log.Printf("Twitch API error looking up %s: %d - %s", username, resp.StatusCode, string(body))
-		return "", ""
+		return "", "", ""
 	}
 
 	var apiResp struct {
 		Data []struct {
-			ID    string `json:"id"`
-			Login string `json:"login"`
+			ID          string `json:"id"`
+			Login       string `json:"login"`
+			DisplayName string `json:"display_name"`
 		} `json:"data"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return "", ""
+		return "", "", ""
 	}
 
 	if len(apiResp.Data) == 0 {
-		return "", ""
+		return "", "", ""
 	}
 
-	return apiResp.Data[0].ID, strings.ToLower(apiResp.Data[0].Login)
+	return apiResp.Data[0].ID, strings.ToLower(apiResp.Data[0].Login), apiResp.Data[0].DisplayName
 }
 
 // handleUsernameChange renames brain files and updates database references

@@ -242,6 +242,31 @@ func (c *Config) SetChannelUseGlobalBrain(channel string, useGlobal bool) error 
 	return err
 }
 
+// SetChannelDisplayName stores the display name for a channel
+func (c *Config) SetChannelDisplayName(channel, displayName string) error {
+	db := database.GetDB()
+	_, err := db.Exec("UPDATE channels SET display_name = ? WHERE name = ?", displayName, strings.ToLower(channel))
+	return err
+}
+
+// GetChannelDisplayNames returns a map of channel name -> display name for all channels
+func (c *Config) GetChannelDisplayNames() map[string]string {
+	result := make(map[string]string)
+	db := database.GetDB()
+	rows, err := db.Query("SELECT name, display_name FROM channels WHERE display_name IS NOT NULL AND display_name != ''")
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, displayName string
+		if err := rows.Scan(&name, &displayName); err == nil {
+			result[name] = displayName
+		}
+	}
+	return result
+}
+
 // Blacklist operations
 
 // GetBlacklistedWords returns all blacklisted words

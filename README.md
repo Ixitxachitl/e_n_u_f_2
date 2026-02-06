@@ -36,6 +36,7 @@ A multi-channel Twitch chat bot written in Go with Markov chain text generation,
 - **Sorting Options**: Sort by newest, oldest, or most +1s
 - **Live Updates**: New quotes appear in real-time via WebSocket
 - **Bot Stats**: Display channel count, total transitions, and quote count
+- **Channel Display Names**: Shows proper Twitch display names (e.g., "xQc" not "xqc")
 - **+1 Voting**: Users can upvote favorite quotes with Twitch login
 - **Remote Hosting**: Can be hosted externally with API_BASE configuration
 
@@ -240,7 +241,7 @@ To expose the quotes page publicly with a valid SSL certificate:
 
 ### Main Database (`twitchbot.db`)
 - `config`: Key-value configuration storage
-- `channels`: Channel list with message counts, intervals, and timestamps
+- `channels`: Channel list with message counts, intervals, display names, and timestamps
 - `blacklist`: Blacklisted words
 - `user_blacklist`: Ignored users
 - `twitch_users`: User ID to username mappings (for detecting name changes)
