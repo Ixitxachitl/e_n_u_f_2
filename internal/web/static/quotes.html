@@ -13,6 +13,7 @@
             --text-secondary: #adadb8;
             --accent: #9147ff;
             --border: #2f2f35;
+            --success: #00c853;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -26,10 +27,63 @@
             max-width: 800px;
             margin: 0 auto;
         }
-        h1 {
-            text-align: center;
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        h1 {
             font-size: 2rem;
+        }
+        .login-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            text-decoration: none;
+        }
+        .login-btn:hover {
+            background: #772ce8;
+        }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .user-info img {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+        }
+        .logout-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .logout-btn:hover {
+            background: var(--bg-secondary);
+        }
+        .login-hint {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
         }
         .filters {
             display: flex;
@@ -45,7 +99,7 @@
             color: var(--text-primary);
             font-size: 1rem;
             flex: 1;
-            min-width: 200px;
+            min-width: 150px;
         }
         .filters input:focus, .filters select:focus {
             outline: none;
@@ -66,14 +120,46 @@
             font-size: 1.1rem;
             margin-bottom: 8px;
         }
+        .quote-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
         .quote-meta {
             font-size: 0.85rem;
             color: var(--text-secondary);
-            display: flex;
-            justify-content: space-between;
         }
         .quote-channel {
             color: var(--accent);
+        }
+        .vote-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        .vote-btn:hover:not(:disabled) {
+            border-color: var(--accent);
+            background: rgba(145, 71, 255, 0.1);
+        }
+        .vote-btn.voted {
+            border-color: var(--success);
+            background: rgba(0, 200, 83, 0.1);
+            color: var(--success);
+        }
+        .vote-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .vote-count {
+            font-weight: 600;
         }
         .pagination {
             display: flex;
@@ -115,11 +201,27 @@
 </head>
 <body>
     <div class="container">
-        <h1 id="page-title">🤖 Bot Quotes</h1>
+        <div class="header">
+            <h1 id="page-title">🤖 Bot Quotes</h1>
+            <div id="auth-section">
+                <a href="#" class="login-btn" onclick="loginWithTwitch(); return false;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+                    Login with Twitch
+                </a>
+            </div>
+        </div>
+        <div id="login-hint" class="login-hint" style="display: none;">
+            💡 Login with Twitch to +1 your favorite quotes!
+        </div>
         <div class="filters">
             <input type="text" id="search" placeholder="Search quotes...">
             <select id="channel">
                 <option value="">All Channels</option>
+            </select>
+            <select id="sort">
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="most_votes">Most +1s</option>
             </select>
         </div>
         <div id="stats" class="stats"></div>
@@ -127,19 +229,166 @@
         <div id="pagination" class="pagination"></div>
     </div>
     <script>
-        // Hosted on the bot - no base URL needed
+        // Leave empty if hosting directly on the bot
         const API_BASE = '';
         
         let currentPage = 1;
         let debounceTimer;
+        let twitchUser = null;
+        let clientId = null;
+        
+        // Initialize auth - check for OAuth callback or stored user
+        async function initAuth() {
+            // First, try to get client ID from the bot's public endpoint
+            try {
+                const res = await fetch(API_BASE + '/api/public/client-id');
+                const data = await res.json();
+                if (data.client_id) {
+                    clientId = data.client_id;
+                }
+            } catch (e) {
+                console.log('Could not fetch client ID');
+            }
+            
+            // Check URL for OAuth callback
+            const hash = window.location.hash.substring(1);
+            if (hash) {
+                const params = new URLSearchParams(hash);
+                const accessToken = params.get('access_token');
+                if (accessToken) {
+                    await validateToken(accessToken);
+                    history.replaceState(null, '', window.location.pathname);
+                    return;
+                }
+            }
+            
+            // Check localStorage for stored user
+            const stored = localStorage.getItem('quotes_twitch_user');
+            if (stored) {
+                try {
+                    twitchUser = JSON.parse(stored);
+                    // Validate stored token is still good
+                    const valid = await validateStoredToken();
+                    if (valid) {
+                        updateAuthUI();
+                    } else {
+                        localStorage.removeItem('quotes_twitch_user');
+                        twitchUser = null;
+                        document.getElementById('login-hint').style.display = 'block';
+                    }
+                } catch (e) {
+                    localStorage.removeItem('quotes_twitch_user');
+                    document.getElementById('login-hint').style.display = 'block';
+                }
+            } else {
+                document.getElementById('login-hint').style.display = 'block';
+            }
+        }
+        
+        async function validateStoredToken() {
+            if (!twitchUser || !twitchUser.access_token) return false;
+            try {
+                const resp = await fetch('https://id.twitch.tv/oauth2/validate', {
+                    headers: { 'Authorization': 'OAuth ' + twitchUser.access_token }
+                });
+                return resp.ok;
+            } catch (e) {
+                return false;
+            }
+        }
+        
+        async function validateToken(accessToken) {
+            try {
+                // Get client ID if we don't have it
+                let cid = clientId;
+                if (!cid) {
+                    const validateResp = await fetch('https://id.twitch.tv/oauth2/validate', {
+                        headers: { 'Authorization': 'OAuth ' + accessToken }
+                    });
+                    if (validateResp.ok) {
+                        const validateData = await validateResp.json();
+                        cid = validateData.client_id;
+                    }
+                }
+                
+                const resp = await fetch('https://api.twitch.tv/helix/users', {
+                    headers: {
+                        'Authorization': 'Bearer ' + accessToken,
+                        'Client-Id': cid
+                    }
+                });
+                
+                if (!resp.ok) throw new Error('Invalid token');
+                
+                const data = await resp.json();
+                if (data.data && data.data.length > 0) {
+                    twitchUser = {
+                        id: data.data[0].id,
+                        login: data.data[0].login,
+                        display_name: data.data[0].display_name,
+                        profile_image_url: data.data[0].profile_image_url,
+                        access_token: accessToken
+                    };
+                    localStorage.setItem('quotes_twitch_user', JSON.stringify(twitchUser));
+                    updateAuthUI();
+                    loadQuotes();
+                }
+            } catch (e) {
+                console.error('Failed to validate token:', e);
+                alert('Failed to login with Twitch');
+            }
+        }
+        
+        function loginWithTwitch() {
+            if (!clientId) {
+                alert('Unable to login: Bot client ID not available. Make sure the bot is configured with a Twitch application.');
+                return;
+            }
+            const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
+            const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=`;
+            window.location.href = authUrl;
+        }
+        
+        function logout() {
+            twitchUser = null;
+            localStorage.removeItem('quotes_twitch_user');
+            updateAuthUI();
+            document.getElementById('login-hint').style.display = 'block';
+            loadQuotes();
+        }
+        
+        function updateAuthUI() {
+            const authSection = document.getElementById('auth-section');
+            const loginHint = document.getElementById('login-hint');
+            
+            if (twitchUser) {
+                loginHint.style.display = 'none';
+                authSection.innerHTML = `
+                    <div class="user-info">
+                        <img src="${twitchUser.profile_image_url}" alt="${twitchUser.display_name}">
+                        <span>${twitchUser.display_name}</span>
+                        <button class="logout-btn" onclick="logout()">Logout</button>
+                    </div>
+                `;
+            } else {
+                authSection.innerHTML = `
+                    <a href="#" class="login-btn" onclick="loginWithTwitch(); return false;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+                        Login with Twitch
+                    </a>
+                `;
+            }
+        }
 
         async function loadQuotes() {
             const search = document.getElementById('search').value;
             const channel = document.getElementById('channel').value;
+            const sort = document.getElementById('sort').value;
             
-            const params = new URLSearchParams({ page: currentPage, pageSize: 20 });
+            const params = new URLSearchParams({ page: currentPage, pageSize: 20, sort });
             if (search) params.set('search', search);
             if (channel) params.set('channel', channel);
+            if (twitchUser) params.set('user_id', twitchUser.id);
             
             const res = await fetch(API_BASE + '/api/quotes?' + params);
             const data = await res.json();
@@ -172,11 +421,20 @@
             } else {
                 container.innerHTML = data.quotes.map(q => {
                     const date = new Date(q.created_at).toLocaleString();
-                    return `<div class="quote">
+                    const votedClass = q.user_voted ? 'voted' : '';
+                    const voteDisabled = !twitchUser ? 'disabled title="Login to vote"' : '';
+                    const votes = q.votes || 0;
+                    return `<div class="quote" data-id="${q.id}">
                         <div class="quote-text">${escapeHtml(q.message)}</div>
-                        <div class="quote-meta">
-                            <span class="quote-channel">#${escapeHtml(q.channel)}</span>
-                            <span>${date}</span>
+                        <div class="quote-footer">
+                            <div class="quote-meta">
+                                <span class="quote-channel">#${escapeHtml(q.channel)}</span>
+                                <span> • ${date}</span>
+                            </div>
+                            <button class="vote-btn ${votedClass}" onclick="toggleVote(${q.id}, ${q.user_voted ? 'true' : 'false'})" ${voteDisabled}>
+                                <span>👍</span>
+                                <span class="vote-count" id="votes-${q.id}">${votes}</span>
+                            </button>
                         </div>
                     </div>`;
                 }).join('');
@@ -204,6 +462,48 @@
             }
         }
         
+        async function toggleVote(quoteId, currentlyVoted) {
+            if (!twitchUser) {
+                alert('Please login with Twitch to vote!');
+                return;
+            }
+            
+            const method = currentlyVoted ? 'DELETE' : 'POST';
+            
+            try {
+                const res = await fetch(API_BASE + '/api/quotes/' + quoteId + '/vote', {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        twitch_user_id: twitchUser.id,
+                        twitch_username: twitchUser.login
+                    })
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    // Update UI
+                    const btn = document.querySelector(`.quote[data-id="${quoteId}"] .vote-btn`);
+                    const countEl = document.getElementById('votes-' + quoteId);
+                    
+                    if (currentlyVoted) {
+                        btn.classList.remove('voted');
+                        btn.onclick = () => toggleVote(quoteId, false);
+                    } else {
+                        btn.classList.add('voted');
+                        btn.onclick = () => toggleVote(quoteId, true);
+                    }
+                    countEl.textContent = data.votes;
+                } else {
+                    alert(data.error || 'Failed to vote');
+                }
+            } catch (e) {
+                console.error('Vote error:', e);
+                alert('Failed to vote');
+            }
+        }
+        
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -220,7 +520,13 @@
             loadQuotes();
         });
         
-        loadQuotes();
+        document.getElementById('sort').addEventListener('change', () => {
+            currentPage = 1;
+            loadQuotes();
+        });
+        
+        // Initialize
+        initAuth().then(() => loadQuotes());
     </script>
 </body>
 </html>

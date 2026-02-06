@@ -126,6 +126,17 @@ func createTables() error {
 			message TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+
+		// Quote votes table for +1 system
+		`CREATE TABLE IF NOT EXISTS quote_votes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			quote_id INTEGER NOT NULL,
+			twitch_user_id TEXT NOT NULL,
+			twitch_username TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(quote_id, twitch_user_id),
+			FOREIGN KEY(quote_id) REFERENCES quotes(id) ON DELETE CASCADE
+		)`,
 	}
 
 	for _, table := range tables {
@@ -162,6 +173,8 @@ type Quote struct {
 	Channel   string `json:"channel"`
 	Message   string `json:"message"`
 	CreatedAt string `json:"created_at"`
+	Votes     int    `json:"votes"`
+	UserVoted bool   `json:"user_voted,omitempty"`
 }
 
 // SaveQuote saves a bot-generated message to the quotes table
@@ -173,22 +186,22 @@ func SaveQuote(channel, message string) error {
 	return err
 }
 
-// GetQuotes retrieves quotes with optional search and pagination
-func GetQuotes(search string, channel string, page, pageSize int) ([]Quote, int, error) {
+// GetQuotes retrieves quotes with optional search, sorting, and pagination
+func GetQuotes(search string, channel string, page, pageSize int, sort string, userID string) ([]Quote, int, error) {
 	if db == nil {
 		return nil, 0, nil
 	}
 
 	// Build query
-	baseQuery := "FROM quotes WHERE 1=1"
+	baseQuery := "FROM quotes q WHERE 1=1"
 	args := []interface{}{}
 
 	if search != "" {
-		baseQuery += " AND message LIKE ?"
+		baseQuery += " AND q.message LIKE ?"
 		args = append(args, "%"+search+"%")
 	}
 	if channel != "" {
-		baseQuery += " AND channel = ?"
+		baseQuery += " AND q.channel = ?"
 		args = append(args, channel)
 	}
 
@@ -199,12 +212,30 @@ func GetQuotes(search string, channel string, page, pageSize int) ([]Quote, int,
 		return nil, 0, err
 	}
 
-	// Get paginated results
-	offset := (page - 1) * pageSize
-	selectQuery := "SELECT id, channel, message, created_at " + baseQuery + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-	args = append(args, pageSize, offset)
+	// Determine sort order
+	orderBy := "q.created_at DESC" // default: newest
+	switch sort {
+	case "oldest":
+		orderBy = "q.created_at ASC"
+	case "most_votes":
+		orderBy = "vote_count DESC, q.created_at DESC"
+	case "newest":
+		orderBy = "q.created_at DESC"
+	}
 
-	rows, err := db.Query(selectQuery, args...)
+	// Get paginated results with vote counts
+	offset := (page - 1) * pageSize
+	selectQuery := `
+		SELECT q.id, q.channel, q.message, q.created_at, 
+			   COALESCE((SELECT COUNT(*) FROM quote_votes WHERE quote_id = q.id), 0) as vote_count,
+			   CASE WHEN EXISTS(SELECT 1 FROM quote_votes WHERE quote_id = q.id AND twitch_user_id = ?) THEN 1 ELSE 0 END as user_voted
+		` + baseQuery + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
+
+	// Add userID for the user_voted check, then the other args, then limit/offset
+	queryArgs := append([]interface{}{userID}, args...)
+	queryArgs = append(queryArgs, pageSize, offset)
+
+	rows, err := db.Query(selectQuery, queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -213,9 +244,11 @@ func GetQuotes(search string, channel string, page, pageSize int) ([]Quote, int,
 	var quotes []Quote
 	for rows.Next() {
 		var q Quote
-		if err := rows.Scan(&q.ID, &q.Channel, &q.Message, &q.CreatedAt); err != nil {
+		var userVoted int
+		if err := rows.Scan(&q.ID, &q.Channel, &q.Message, &q.CreatedAt, &q.Votes, &userVoted); err != nil {
 			continue
 		}
+		q.UserVoted = userVoted == 1
 		quotes = append(quotes, q)
 	}
 
@@ -244,4 +277,43 @@ func GetQuoteChannels() ([]string, error) {
 	}
 
 	return channels, nil
+}
+
+// VoteQuote adds a +1 vote to a quote (returns true if new vote, false if already voted)
+func VoteQuote(quoteID int64, twitchUserID, twitchUsername string) (bool, error) {
+	if db == nil {
+		return false, nil
+	}
+
+	result, err := db.Exec(
+		"INSERT OR IGNORE INTO quote_votes (quote_id, twitch_user_id, twitch_username) VALUES (?, ?, ?)",
+		quoteID, twitchUserID, twitchUsername,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	affected, _ := result.RowsAffected()
+	return affected > 0, nil
+}
+
+// UnvoteQuote removes a +1 vote from a quote
+func UnvoteQuote(quoteID int64, twitchUserID string) error {
+	if db == nil {
+		return nil
+	}
+
+	_, err := db.Exec("DELETE FROM quote_votes WHERE quote_id = ? AND twitch_user_id = ?", quoteID, twitchUserID)
+	return err
+}
+
+// GetQuoteVoteCount returns the vote count for a quote
+func GetQuoteVoteCount(quoteID int64) (int, error) {
+	if db == nil {
+		return 0, nil
+	}
+
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM quote_votes WHERE quote_id = ?", quoteID).Scan(&count)
+	return count, err
 }

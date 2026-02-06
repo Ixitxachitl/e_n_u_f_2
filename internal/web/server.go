@@ -153,6 +153,8 @@ func (s *Server) Start() error {
 
 	// Public API routes (no auth required)
 	mux.HandleFunc("/api/quotes", s.handleQuotes)
+	mux.HandleFunc("/api/quotes/", s.handleQuoteVote) // /api/quotes/{id}/vote
+	mux.HandleFunc("/api/public/client-id", s.handlePublicClientID)
 
 	// Static files (always accessible - login page needs to load)
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -1468,7 +1470,10 @@ func (s *Server) handleQuotes(w http.ResponseWriter, r *http.Request) {
 		pageSize = 50
 	}
 
-	quotes, total, err := database.GetQuotes(search, channel, page, pageSize)
+	sort := r.URL.Query().Get("sort")      // newest, oldest, most_votes
+	userID := r.URL.Query().Get("user_id") // for checking if user voted
+
+	quotes, total, err := database.GetQuotes(search, channel, page, pageSize, sort, userID)
 	if err != nil {
 		httpError(w, "Failed to get quotes", http.StatusInternalServerError)
 		return
@@ -1484,5 +1489,97 @@ func (s *Server) handleQuotes(w http.ResponseWriter, r *http.Request) {
 		"total_pages":  (total + pageSize - 1) / pageSize,
 		"channels":     channels,
 		"bot_username": s.cfg.GetBotUsername(),
+	})
+}
+
+// handleQuoteVote handles voting on quotes
+func (s *Server) handleQuoteVote(w http.ResponseWriter, r *http.Request) {
+	// Add CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Extract quote ID from path
+	path := strings.TrimPrefix(r.URL.Path, "/api/quotes/")
+	path = strings.TrimSuffix(path, "/vote")
+	var quoteID int64
+	if _, err := fmt.Sscanf(path, "%d", &quoteID); err != nil {
+		httpError(w, "Invalid quote ID", http.StatusBadRequest)
+		return
+	}
+
+	// Parse request body for user info
+	var req struct {
+		TwitchUserID   string `json:"twitch_user_id"`
+		TwitchUsername string `json:"twitch_username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.TwitchUserID == "" || req.TwitchUsername == "" {
+		httpError(w, "Twitch user ID and username required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		// Add vote
+		isNew, err := database.VoteQuote(quoteID, req.TwitchUserID, req.TwitchUsername)
+		if err != nil {
+			httpError(w, "Failed to vote", http.StatusInternalServerError)
+			return
+		}
+		count, _ := database.GetQuoteVoteCount(quoteID)
+		jsonResponse(w, map[string]interface{}{
+			"status":   "voted",
+			"new_vote": isNew,
+			"votes":    count,
+			"quote_id": quoteID,
+		})
+
+	case http.MethodDelete:
+		// Remove vote
+		if err := database.UnvoteQuote(quoteID, req.TwitchUserID); err != nil {
+			httpError(w, "Failed to unvote", http.StatusInternalServerError)
+			return
+		}
+		count, _ := database.GetQuoteVoteCount(quoteID)
+		jsonResponse(w, map[string]interface{}{
+			"status":   "unvoted",
+			"votes":    count,
+			"quote_id": quoteID,
+		})
+
+	default:
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handlePublicClientID returns just the client ID for public OAuth flows
+func (s *Server) handlePublicClientID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clientID := s.cfg.GetClientID()
+	jsonResponse(w, map[string]interface{}{
+		"client_id": clientID,
 	})
 }
