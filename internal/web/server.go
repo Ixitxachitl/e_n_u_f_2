@@ -1319,6 +1319,14 @@ func (s *Server) broadcastNewQuote(channel, message string) {
 			delete(s.publicClients, client)
 		}
 	}
+
+	// Also broadcast to admin WebSocket clients
+	for client := range s.clients {
+		if err := client.WriteJSON(msg); err != nil {
+			client.Close()
+			delete(s.clients, client)
+		}
+	}
 }
 
 func jsonResponse(w http.ResponseWriter, data interface{}) {

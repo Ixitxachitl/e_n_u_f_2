@@ -529,6 +529,11 @@ function handleWebSocketEvent(data) {
     } else if (data.event === 'connect' || data.event === 'disconnect') {
         loadChannels();
         loadStatus();
+    } else if (data.event === 'new_quote') {
+        // Auto-refresh quotes list if on first page
+        if (quotesState.page === 1) {
+            loadAdminQuotes();
+        }
     }
 }
 

@@ -363,11 +363,13 @@ header h1 {
 }
 
 .search-filter {
+    display: flex;
+    gap: 10px;
     margin-bottom: 15px;
 }
 
 .search-filter input {
-    width: 100%;
+    flex: 1;
     padding: 10px 15px;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -378,6 +380,26 @@ header h1 {
 
 .search-filter input:focus {
     outline: none;
+    border-color: var(--accent);
+}
+
+.search-filter select {
+    padding: 10px 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    min-width: 150px;
+}
+
+.search-filter select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.search-filter select:hover {
     border-color: var(--accent);
 }
 
