@@ -870,9 +870,11 @@ function renderPagination(container, currentPage, totalPages, totalItems, type) 
         return;
     }
     
-    let html = `<button onclick="goToPage('${type}', ${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>&laquo; Prev</button>`;
+    let html = `<button onclick="goToPage('${type}', 1)" ${currentPage === 1 ? 'disabled' : ''}>&#x21E4; First</button>`;
+    html += `<button onclick="goToPage('${type}', ${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>&laquo; Prev</button>`;
     html += `<span class="page-info">${currentPage} of ${totalPages} (${totalItems} items)</span>`;
     html += `<button onclick="goToPage('${type}', ${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next &raquo;</button>`;
+    html += `<button onclick="goToPage('${type}', ${totalPages})" ${currentPage === totalPages ? 'disabled' : ''}>Last &#x21E5;</button>`;
     
     container.innerHTML = html;
 }
@@ -1372,6 +1374,9 @@ function renderPageNumbers(maxPages) {
     const current = editorState.page;
     let html = '';
     
+    // Add first page button
+    html += `<button class="page-num first-last" onclick="goToPage(1)" ${current === 1 ? 'disabled' : ''}>&#x21E4;</button>`;
+    
     // Determine which pages to show
     let pages = [];
     if (maxPages <= 7) {
@@ -1392,13 +1397,19 @@ function renderPageNumbers(maxPages) {
         pages.push(maxPages);
     }
     
-    html = pages.map(p => {
+    html += pages.map(p => {
         if (p === '...') {
             return '<span class="page-ellipsis">...</span>';
         }
         const activeClass = p === current ? 'active' : '';
         return `<button class="page-num ${activeClass}" onclick="goToPage(${p})">${p}</button>`;
     }).join('');
+    
+    // Add last page button
+    html += `<button class="page-num first-last" onclick="goToPage(${maxPages})" ${current === maxPages ? 'disabled' : ''}>&#x21E5;</button>`;
+    
+    // Add total count
+    html += `<span class="page-total">(${editorState.total.toLocaleString()} total)</span>`;
     
     container.innerHTML = html;
 }
@@ -1538,9 +1549,11 @@ function renderQuotesPagination(maxPages) {
     if (maxPages <= 1) return '';
 
     let html = '';
+    html += `<button class="btn" onclick="goToQuotesPage(1)" ${quotesState.page <= 1 ? 'disabled' : ''}>&#x21E4; First</button>`;
     html += `<button class="btn" onclick="goToQuotesPage(${quotesState.page - 1})" ${quotesState.page <= 1 ? 'disabled' : ''}>&laquo; Prev</button>`;
-    html += `<span class="page-info">Page ${quotesState.page} of ${maxPages}</span>`;
+    html += `<span class="page-info">${quotesState.page} of ${maxPages} (${quotesState.total} items)</span>`;
     html += `<button class="btn" onclick="goToQuotesPage(${quotesState.page + 1})" ${quotesState.page >= maxPages ? 'disabled' : ''}>Next &raquo;</button>`;
+    html += `<button class="btn" onclick="goToQuotesPage(${maxPages})" ${quotesState.page >= maxPages ? 'disabled' : ''}>Last &#x21E5;</button>`;
     return html;
 }
 

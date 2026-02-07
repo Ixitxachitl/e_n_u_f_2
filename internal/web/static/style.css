@@ -1318,6 +1318,21 @@ input[type="range"]::-webkit-slider-thumb {
     padding: 0 4px;
 }
 
+.page-num.first-last {
+    font-weight: bold;
+}
+
+.page-num.first-last:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.page-total {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-left: 8px;
+}
+
 /* Footer */
 .app-footer {
     text-align: center;

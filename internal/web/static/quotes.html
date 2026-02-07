@@ -512,6 +512,12 @@
             const pagination = document.getElementById('pagination');
             pagination.innerHTML = '';
             if (data.total_pages > 1) {
+                const firstBtn = document.createElement('button');
+                firstBtn.innerHTML = '&#x21E4; First';
+                firstBtn.disabled = currentPage <= 1;
+                firstBtn.onclick = () => { currentPage = 1; loadQuotes(); };
+                pagination.appendChild(firstBtn);
+                
                 const prevBtn = document.createElement('button');
                 prevBtn.textContent = '← Previous';
                 prevBtn.disabled = currentPage <= 1;
@@ -519,7 +525,7 @@
                 pagination.appendChild(prevBtn);
                 
                 const pageInfo = document.createElement('span');
-                pageInfo.textContent = 'Page ' + currentPage + ' of ' + data.total_pages;
+                pageInfo.textContent = currentPage + ' of ' + data.total_pages + ' (' + data.total + ' items)';
                 pagination.appendChild(pageInfo);
                 
                 const nextBtn = document.createElement('button');
@@ -527,6 +533,12 @@
                 nextBtn.disabled = currentPage >= data.total_pages;
                 nextBtn.onclick = () => { currentPage++; loadQuotes(); };
                 pagination.appendChild(nextBtn);
+                
+                const lastBtn = document.createElement('button');
+                lastBtn.innerHTML = 'Last &#x21E5;';
+                lastBtn.disabled = currentPage >= data.total_pages;
+                lastBtn.onclick = () => { currentPage = data.total_pages; loadQuotes(); };
+                pagination.appendChild(lastBtn);
             }
         }
         
