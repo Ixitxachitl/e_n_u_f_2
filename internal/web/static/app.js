@@ -32,6 +32,7 @@ const activityLog = [];
 const MAX_LOG_ENTRIES = 50;
 const appRamHistory = [];
 const MAX_RAM_POINTS = 20;
+let botUsername = '';
 
 // Twitch color palette for random user colors
 const TWITCH_COLORS = [
@@ -539,9 +540,11 @@ function handleWebSocketEvent(data) {
 
 // Data Loading
 async function loadInitialData() {
+    // Load config first to get bot username for activity highlighting
+    await loadConfig();
+    
     await Promise.all([
         loadStatus(),
-        loadConfig(),
         loadChannels(),
         loadLiveChannels(),
         loadBrains(),
@@ -698,6 +701,9 @@ async function loadConfig() {
     const host = config.local_ip || window.location.hostname;
     const redirectUrl = `${protocol}//${host}:${port}/auth/callback`;
     elements.redirectUrl.textContent = redirectUrl;
+    
+    // Store bot username globally for activity log highlighting
+    botUsername = config.bot_username || '';
     
     // Handle login state
     if (config.oauth_token_set && config.bot_username) {
@@ -1131,15 +1137,30 @@ async function loadActivity() {
     // Load saved activity (in reverse order since they're stored newest first)
     for (const entry of activity.reverse()) {
         const time = new Date(entry.created_at).toLocaleTimeString();
-        activityLog.push({
-            time,
-            channel: entry.channel,
-            username: entry.username,
-            message: entry.message,
-            color: entry.color,
-            emotes: entry.emotes,
-            badges: entry.badges
-        });
+        
+        // Check if this is a bot generation message
+        const isBotMessage = botUsername && entry.username.startsWith(botUsername);
+        if (isBotMessage) {
+            const statusClass = entry.message.startsWith('🤖') ? 'generation-success' : 'generation-failed';
+            activityLog.push({
+                time,
+                channel: entry.channel,
+                username: entry.username,
+                message: entry.message,
+                isGeneration: true,
+                statusClass
+            });
+        } else {
+            activityLog.push({
+                time,
+                channel: entry.channel,
+                username: entry.username,
+                message: entry.message,
+                color: entry.color,
+                emotes: entry.emotes,
+                badges: entry.badges
+            });
+        }
     }
     
     // Reverse to show newest first
