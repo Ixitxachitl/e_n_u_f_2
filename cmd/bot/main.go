@@ -13,6 +13,12 @@ import (
 	"twitchbot/internal/web"
 )
 
+// Build-time variables (set via -ldflags)
+var (
+	Version   = "dev"
+	CommitSHA = "unknown"
+)
+
 // getLocalIP returns the local IP address of the machine
 func getLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
@@ -52,7 +58,7 @@ func main() {
 	}
 
 	// Start web server
-	webServer := web.NewServer(cfg, manager)
+	webServer := web.NewServer(cfg, manager, Version, CommitSHA)
 	go func() {
 		if err := webServer.Start(); err != nil {
 			log.Fatalf("Web server error: %v", err)

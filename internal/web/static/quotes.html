@@ -232,6 +232,14 @@
             font-size: 0.85rem;
             color: var(--text-secondary);
         }
+        .app-footer {
+            text-align: center;
+            padding: 15px;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            border-top: 1px solid var(--border);
+            margin-top: 30px;
+        }
     </style>
 </head>
 <body>
@@ -276,6 +284,9 @@
         <div id="quotes" class="quote-list"></div>
         <div id="pagination" class="pagination"></div>
     </div>
+    <footer class="app-footer">
+        <span id="version-info">Loading version...</span>
+    </footer>
     <script>
         // Leave empty if hosting directly on the bot
         const API_BASE = '';
@@ -717,7 +728,22 @@
         initAuth().then(() => {
             loadQuotes();
             connectWebSocket();
+            loadVersion();
         });
+        
+        async function loadVersion() {
+            try {
+                const res = await fetch(API_BASE + '/api/version');
+                const data = await res.json();
+                const versionEl = document.getElementById('version-info');
+                if (versionEl) {
+                    const commitShort = data.commit.length > 7 ? data.commit.substring(0, 7) : data.commit;
+                    versionEl.textContent = `v${data.version} (${commitShort})`;
+                }
+            } catch (err) {
+                console.error('Failed to load version:', err);
+            }
+        }
     </script>
 </body>
 </html>

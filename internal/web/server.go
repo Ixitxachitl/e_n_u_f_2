@@ -45,10 +45,12 @@ type Server struct {
 	clients       map[*websocket.Conn]bool
 	publicClients map[*websocket.Conn]bool
 	mu            sync.Mutex
+	version       string
+	commitSHA     string
 }
 
 // NewServer creates a new web server
-func NewServer(cfg *config.Config, manager *twitch.Manager) *Server {
+func NewServer(cfg *config.Config, manager *twitch.Manager, version, commitSHA string) *Server {
 	s := &Server{
 		cfg:     cfg,
 		manager: manager,
@@ -57,6 +59,8 @@ func NewServer(cfg *config.Config, manager *twitch.Manager) *Server {
 		},
 		clients:       make(map[*websocket.Conn]bool),
 		publicClients: make(map[*websocket.Conn]bool),
+		version:       version,
+		commitSHA:     commitSHA,
 	}
 
 	// Set up event handler for real-time updates
@@ -158,6 +162,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/quotes", s.handleQuotes)
 	mux.HandleFunc("/api/quotes/", s.handleQuoteVote) // /api/quotes/{id}/vote
 	mux.HandleFunc("/api/public/client-id", s.handlePublicClientID)
+	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/ws/public", s.handlePublicWebSocket) // Public WebSocket for quotes page
 
 	// Static files (always accessible - login page needs to load)
@@ -1702,6 +1707,19 @@ func (s *Server) handlePublicClientID(w http.ResponseWriter, r *http.Request) {
 	clientID := s.cfg.GetClientID()
 	jsonResponse(w, map[string]interface{}{
 		"client_id": clientID,
+	})
+}
+
+// handleVersion returns the app version and commit SHA
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method != http.MethodGet {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	jsonResponse(w, map[string]string{
+		"version": s.version,
+		"commit":  s.commitSHA,
 	})
 }
 

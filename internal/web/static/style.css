@@ -1317,3 +1317,13 @@ input[type="range"]::-webkit-slider-thumb {
     color: var(--text-secondary);
     padding: 0 4px;
 }
+
+/* Footer */
+.app-footer {
+    text-align: center;
+    padding: 15px;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    border-top: 1px solid var(--border);
+    margin-top: auto;
+}

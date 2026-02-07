@@ -4,7 +4,7 @@
         {
             "label": "Build",
             "type": "shell",
-            "command": "go build -o twitchbot.exe ./cmd/bot",
+            "command": "$version = Get-Content VERSION; $commit = git rev-parse --short HEAD; go build -ldflags \"-X main.Version=$version -X main.CommitSHA=$commit\" -o twitchbot.exe ./cmd/bot",
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -28,7 +28,7 @@
         {
             "label": "Build & Run",
             "type": "shell",
-            "command": "go build -o twitchbot.exe ./cmd/bot && .\\twitchbot.exe",
+            "command": "$version = Get-Content VERSION; $commit = git rev-parse --short HEAD; go build -ldflags \"-X main.Version=$version -X main.CommitSHA=$commit\" -o twitchbot.exe ./cmd/bot; .\\twitchbot.exe",
             "group": "none",
             "problemMatcher": ["$go"],
             "detail": "Build and run the bot",
@@ -41,7 +41,7 @@
         {
             "label": "Build for Raspberry Pi",
             "type": "shell",
-            "command": "$env:GOOS='linux'; $env:GOARCH='arm64'; $env:CGO_ENABLED='0'; go build -o twitchbot-linux-arm64 ./cmd/bot",
+            "command": "$version = Get-Content VERSION; $commit = git rev-parse --short HEAD; $env:GOOS='linux'; $env:GOARCH='arm64'; $env:CGO_ENABLED='0'; go build -ldflags \"-X main.Version=$version -X main.CommitSHA=$commit\" -o twitchbot-linux-arm64 ./cmd/bot",
             "group": "build",
             "problemMatcher": ["$go"],
             "detail": "Cross-compile for Raspberry Pi ARM64"
@@ -57,7 +57,7 @@
         {
             "label": "Clean Build",
             "type": "shell",
-            "command": "go clean && go build -o twitchbot.exe ./cmd/bot",
+            "command": "$version = Get-Content VERSION; $commit = git rev-parse --short HEAD; go clean; go build -ldflags \"-X main.Version=$version -X main.CommitSHA=$commit\" -o twitchbot.exe ./cmd/bot",
             "group": "build",
             "problemMatcher": ["$go"],
             "detail": "Clean and rebuild"

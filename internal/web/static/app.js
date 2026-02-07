@@ -268,6 +268,7 @@ function initializeApp() {
     connectWebSocket();
     loadInitialData();
     startAutoRefresh();
+    loadVersion();
 }
 
 // Start auto-refresh every 5 seconds
@@ -1556,4 +1557,19 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Load and display version info
+async function loadVersion() {
+    try {
+        const res = await fetch('/api/version');
+        const data = await res.json();
+        const versionEl = document.getElementById('version-info');
+        if (versionEl) {
+            const commitShort = data.commit.length > 7 ? data.commit.substring(0, 7) : data.commit;
+            versionEl.textContent = `v${data.version} (${commitShort})`;
+        }
+    } catch (err) {
+        console.error('Failed to load version:', err);
+    }
 }
