@@ -175,25 +175,28 @@ func (m *Manager) DeleteBrain(channel string) error {
 }
 
 // CleanBrain cleans a specific brain of blacklisted words
-func (m *Manager) CleanBrain(channel string) int {
+func (m *Manager) CleanBrain(channel string) CleanResult {
 	brain := m.GetBrain(channel)
 	if brain == nil {
-		return 0
+		return CleanResult{Channel: channel, Words: []CleanWordResult{}}
 	}
 	return brain.Clean()
 }
 
 // CleanAllBrains cleans all brains of blacklisted words
-func (m *Manager) CleanAllBrains() int {
+func (m *Manager) CleanAllBrains() []CleanResult {
 	stats := m.ListBrains()
-	totalRemoved := 0
+	results := []CleanResult{}
 	for _, stat := range stats {
 		brain := m.GetBrain(stat.Channel)
 		if brain != nil {
-			totalRemoved += brain.Clean()
+			result := brain.Clean()
+			if result.TotalRemoved > 0 {
+				results = append(results, result)
+			}
 		}
 	}
-	return totalRemoved
+	return results
 }
 
 // OptimizeAll runs VACUUM on all brain databases

@@ -35,6 +35,19 @@ type BrainStats struct {
 	DbSize       int64  `json:"db_size"`
 }
 
+// CleanWordResult holds the result of cleaning a single blacklisted word
+type CleanWordResult struct {
+	Word    string `json:"word"`
+	Removed int    `json:"removed"`
+}
+
+// CleanResult holds the result of cleaning a brain
+type CleanResult struct {
+	Channel      string            `json:"channel"`
+	TotalRemoved int               `json:"total_removed"`
+	Words        []CleanWordResult `json:"words"`
+}
+
 // NewBrain creates a new brain for a channel with its own database
 func NewBrain(channel string, cfg *config.Config) (*Brain, error) {
 	channel = strings.ToLower(channel)
@@ -397,17 +410,23 @@ func (b *Brain) GetStats() BrainStats {
 }
 
 // Clean removes all transitions containing blacklisted words
-func (b *Brain) Clean() (rowsRemoved int) {
+func (b *Brain) Clean() CleanResult {
+	result := CleanResult{
+		Channel: b.Channel,
+		Words:   []CleanWordResult{},
+	}
+
 	blacklist := b.cfg.GetBlacklistedWords()
 
 	if len(blacklist) == 0 {
-		return 0
+		return result
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	for _, word := range blacklist {
+		wordRemoved := 0
 		// Check if this is a multi-word phrase
 		words := strings.Fields(word)
 
@@ -418,33 +437,41 @@ func (b *Brain) Clean() (rowsRemoved int) {
 				w1 := strings.ToLower(words[i])
 				w2 := strings.ToLower(words[i+1])
 
-				result, _ := b.db.Exec(`
+				res, _ := b.db.Exec(`
 					DELETE FROM transitions 
 					WHERE (LOWER(word1) = ? AND LOWER(word2) = ?)
 					   OR (LOWER(word2) = ? AND LOWER(next_word) = ?)
 				`, w1, w2, w1, w2)
 
-				if result != nil {
-					affected, _ := result.RowsAffected()
-					rowsRemoved += int(affected)
+				if res != nil {
+					affected, _ := res.RowsAffected()
+					wordRemoved += int(affected)
 				}
 			}
 		} else {
 			// Single word: use LIKE for partial matching
 			pattern := "%" + strings.ToLower(word) + "%"
-			result, _ := b.db.Exec(`
+			res, _ := b.db.Exec(`
 				DELETE FROM transitions 
 				WHERE LOWER(word1) LIKE ? OR LOWER(word2) LIKE ? OR LOWER(next_word) LIKE ?
 			`, pattern, pattern, pattern)
 
-			if result != nil {
-				affected, _ := result.RowsAffected()
-				rowsRemoved += int(affected)
+			if res != nil {
+				affected, _ := res.RowsAffected()
+				wordRemoved = int(affected)
 			}
+		}
+
+		if wordRemoved > 0 {
+			result.Words = append(result.Words, CleanWordResult{
+				Word:    word,
+				Removed: wordRemoved,
+			})
+			result.TotalRemoved += wordRemoved
 		}
 	}
 
-	return rowsRemoved
+	return result
 }
 
 // CleanNonASCII removes transitions containing non-ASCII characters (excluding emoji)

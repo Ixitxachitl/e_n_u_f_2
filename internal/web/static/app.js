@@ -417,8 +417,7 @@ function setupEventListeners() {
     });
 
     // Database
-    document.getElementById('optimize-db-btn').addEventListener('click', optimizeDatabase);
-    document.getElementById('clean-all-btn').addEventListener('click', cleanAllBrains);
+    document.getElementById('clean-optimize-btn').addEventListener('click', cleanAndOptimizeAll);
     
     // Brain editor
     document.getElementById('transition-search').addEventListener('keypress', e => {
@@ -1015,7 +1014,6 @@ function renderBrains(brains) {
                 </div>
             </div>
             <div class="actions" onclick="event.stopPropagation()">
-                <button class="btn warning" onclick="cleanBrain('${brain.channel}')">Clean</button>
                 <button class="btn danger" onclick="eraseBrain('${brain.channel}')">Erase</button>
             </div>
         </div>
@@ -1192,14 +1190,6 @@ async function reconnectChannel(channel) {
     }
 }
 
-async function cleanBrain(channel) {
-    if (!confirm(`Clean brain for "${channel}"? This will remove all transitions containing blacklisted words.`)) return;
-    const result = await api.post(`/api/brains/${channel}/clean`, {});
-    alert(`Removed ${result.rows_removed} entries`);
-    loadBrains();
-    loadDatabaseStats();
-}
-
 async function eraseBrain(channel) {
     if (!confirm(`Erase all brain data for "${channel}"? The database will be cleared but kept. To fully remove it, remove the channel.`)) return;
     await api.delete(`/api/brains/${channel}`);
@@ -1244,21 +1234,34 @@ async function removeIgnoredUser(username) {
     loadIgnoredUsers();
 }
 
-async function optimizeDatabase() {
-    const result = await api.post('/api/database', {});
-    let msg = 'Database optimized!';
-    if (result.non_ascii_removed > 0) {
-        msg += `\nRemoved ${result.non_ascii_removed} transitions with non-ASCII characters.`;
+async function cleanAndOptimizeAll() {
+    if (!confirm('Clean and optimize ALL brain data?\n\nThis will:\n- Remove entries containing blacklisted words\n- Remove non-ASCII characters\n- Optimize database files')) return;
+    
+    // First clean blacklisted words
+    const cleanResult = await api.delete('/api/database');
+    
+    // Then optimize
+    const optimizeResult = await api.post('/api/database', {});
+    
+    let msg = `Cleaned ${cleanResult.total_removed} blacklisted entries.`;
+    
+    if (optimizeResult.non_ascii_removed > 0) {
+        msg += `\nRemoved ${optimizeResult.non_ascii_removed} non-ASCII transitions.`;
     }
+    
+    if (cleanResult.channels && cleanResult.channels.length > 0) {
+        msg += '\n\nBlacklist cleanup details:';
+        for (const ch of cleanResult.channels) {
+            msg += `\n\n[${ch.channel}] - ${ch.total_removed} removed:`;
+            for (const w of ch.words) {
+                msg += `\n  "${w.word}" - ${w.removed} transitions`;
+            }
+        }
+    }
+    
+    msg += '\n\nDatabase optimized!';
+    
     alert(msg);
-    loadDatabaseStats();
-    loadBrains();
-}
-
-async function cleanAllBrains() {
-    if (!confirm('Clean ALL brain data? This will remove entries containing blacklisted words from all channels.')) return;
-    const result = await api.delete('/api/database');
-    alert(`Removed ${result.rows_removed} entries from all brains`);
     loadBrains();
     loadDatabaseStats();
 }

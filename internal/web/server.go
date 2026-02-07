@@ -958,8 +958,8 @@ func (s *Server) handleBrainAction(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		if action == "clean" {
-			removed := s.manager.GetBrainManager().CleanBrain(channel)
-			jsonResponse(w, map[string]int{"rows_removed": removed})
+			result := s.manager.GetBrainManager().CleanBrain(channel)
+			jsonResponse(w, result)
 		} else {
 			httpError(w, "Unknown action", http.StatusBadRequest)
 		}
@@ -1137,8 +1137,15 @@ func (s *Server) handleDatabase(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		// Clean all brains
-		removed := s.manager.GetBrainManager().CleanAllBrains()
-		jsonResponse(w, map[string]int{"rows_removed": removed})
+		results := s.manager.GetBrainManager().CleanAllBrains()
+		totalRemoved := 0
+		for _, r := range results {
+			totalRemoved += r.TotalRemoved
+		}
+		jsonResponse(w, map[string]interface{}{
+			"total_removed": totalRemoved,
+			"channels":      results,
+		})
 
 	default:
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
