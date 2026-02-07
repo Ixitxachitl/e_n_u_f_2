@@ -19,6 +19,8 @@ A multi-channel Twitch chat bot written in Go with Markov chain text generation,
 - **HTTPS Support**: Self-signed certificate generation for secure OAuth callbacks
 - **Word & User Blacklists**: Filter unwanted words and ignore specific users
 - **Link Filtering**: Automatically skip messages containing URLs
+- **Emoji Support**: Emoji are preserved in Markov chains while filtering non-English text
+- **Loop Prevention**: Detects and prevents repetitive transitions (word1 == word2 == nextWord)
 - **Bot Channel Isolation**: Bot's own channel doesn't learn or generate messages
 
 ### Web Interface
