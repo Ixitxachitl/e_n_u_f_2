@@ -431,8 +431,8 @@ func (b *Brain) Clean() CleanResult {
 		words := strings.Fields(word)
 
 		if len(words) >= 2 {
-			// Multi-word phrase: match sequential words across columns
-			// For "bad word", delete where (word1="bad" AND word2="word") OR (word2="bad" AND next_word="word")
+			// Multi-word phrase: match exact sequential words across columns
+			// For "bill nye", delete where (word1="bill" AND word2="nye") OR (word2="bill" AND next_word="nye")
 			for i := 0; i < len(words)-1; i++ {
 				w1 := strings.ToLower(words[i])
 				w2 := strings.ToLower(words[i+1])
@@ -449,12 +449,12 @@ func (b *Brain) Clean() CleanResult {
 				}
 			}
 		} else {
-			// Single word: use LIKE for partial matching
-			pattern := "%" + strings.ToLower(word) + "%"
+			// Single word: exact match only
+			wordLower := strings.ToLower(word)
 			res, _ := b.db.Exec(`
 				DELETE FROM transitions 
-				WHERE LOWER(word1) LIKE ? OR LOWER(word2) LIKE ? OR LOWER(next_word) LIKE ?
-			`, pattern, pattern, pattern)
+				WHERE LOWER(word1) = ? OR LOWER(word2) = ? OR LOWER(next_word) = ?
+			`, wordLower, wordLower, wordLower)
 
 			if res != nil {
 				affected, _ := res.RowsAffected()
