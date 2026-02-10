@@ -1374,8 +1374,12 @@ function renderTransitions(result) {
     document.getElementById('editor-total').textContent = result.total.toLocaleString();
     
     const maxPages = Math.ceil(result.total / editorState.pageSize) || 1;
+    document.getElementById('first-page-btn').disabled = editorState.page <= 1;
     document.getElementById('prev-page-btn').disabled = editorState.page <= 1;
     document.getElementById('next-page-btn').disabled = editorState.page >= maxPages;
+    const lastBtn = document.getElementById('last-page-btn');
+    lastBtn.disabled = editorState.page >= maxPages;
+    lastBtn.onclick = () => editorGoToPage(maxPages);
     
     // Render page numbers
     renderPageNumbers(maxPages);
@@ -1413,9 +1417,6 @@ function renderPageNumbers(maxPages) {
     const current = editorState.page;
     let html = '';
     
-    // Add first page button
-    html += `<button class="page-num first-last" onclick="goToPage(1)" ${current === 1 ? 'disabled' : ''}>&#x21E4;</button>`;
-    
     // Determine which pages to show
     let pages = [];
     if (maxPages <= 7) {
@@ -1441,11 +1442,8 @@ function renderPageNumbers(maxPages) {
             return '<span class="page-ellipsis">...</span>';
         }
         const activeClass = p === current ? 'active' : '';
-        return `<button class="page-num ${activeClass}" onclick="goToPage(${p})">${p}</button>`;
+        return `<button class="page-num ${activeClass}" onclick="editorGoToPage(${p})">${p}</button>`;
     }).join('');
-    
-    // Add last page button
-    html += `<button class="page-num first-last" onclick="goToPage(${maxPages})" ${current === maxPages ? 'disabled' : ''}>&#x21E5;</button>`;
     
     // Add total count
     html += `<span class="page-total">(${editorState.total.toLocaleString()} total)</span>`;
@@ -1453,7 +1451,7 @@ function renderPageNumbers(maxPages) {
     container.innerHTML = html;
 }
 
-function goToPage(page) {
+function editorGoToPage(page) {
     editorState.page = page;
     loadTransitions();
 }
