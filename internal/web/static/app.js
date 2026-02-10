@@ -311,6 +311,10 @@ function cacheElements() {
     elements.intervalSlider = document.getElementById('interval-slider');
     elements.intervalValue = document.getElementById('interval-value');
     elements.allowSelfJoin = document.getElementById('allow-self-join');
+    elements.allowGlobalLocal = document.getElementById('allow-global-local');
+    elements.allowResponseCmd = document.getElementById('allow-response-cmd');
+    elements.brainModeLocal = document.getElementById('brain-mode-local');
+    elements.brainModeGlobal = document.getElementById('brain-mode-global');
     elements.newChannel = document.getElementById('new-channel');
     elements.newBlacklistWord = document.getElementById('new-blacklist-word');
     elements.newIgnoredUser = document.getElementById('new-ignored-user');
@@ -390,6 +394,28 @@ function setupEventListeners() {
     // Self-join toggle
     elements.allowSelfJoin.addEventListener('change', async () => {
         await api.put('/api/config', { allow_self_join: elements.allowSelfJoin.checked });
+    });
+
+    // Global/local commands toggle
+    elements.allowGlobalLocal.addEventListener('change', async () => {
+        await api.put('/api/config', { allow_global_local_commands: elements.allowGlobalLocal.checked });
+    });
+
+    // Response command toggle
+    elements.allowResponseCmd.addEventListener('change', async () => {
+        await api.put('/api/config', { allow_response_command: elements.allowResponseCmd.checked });
+    });
+
+    // Default brain mode radio buttons
+    elements.brainModeLocal.addEventListener('change', async () => {
+        if (elements.brainModeLocal.checked) {
+            await api.put('/api/config', { default_brain_mode: 'local' });
+        }
+    });
+    elements.brainModeGlobal.addEventListener('change', async () => {
+        if (elements.brainModeGlobal.checked) {
+            await api.put('/api/config', { default_brain_mode: 'global' });
+        }
     });
 
     // Channel search
@@ -694,6 +720,19 @@ async function loadConfig() {
     
     // Set self-join toggle
     elements.allowSelfJoin.checked = config.allow_self_join !== false;
+    
+    // Set global/local commands toggle
+    elements.allowGlobalLocal.checked = config.allow_global_local_commands !== false;
+    
+    // Set response command toggle
+    elements.allowResponseCmd.checked = config.allow_response_command !== false;
+    
+    // Set default brain mode
+    if (config.default_brain_mode === 'global') {
+        elements.brainModeGlobal.checked = true;
+    } else {
+        elements.brainModeLocal.checked = true;
+    }
     
     // Set redirect URL - use internal IP if available for clarity
     const protocol = window.location.protocol;

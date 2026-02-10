@@ -249,6 +249,9 @@ func (c *Client) handleMessage(raw string) {
 
 			// !response <number> - set per-channel message interval
 			if strings.HasPrefix(cmd, "!response") {
+				if !c.cfg.GetAllowResponseCommand() {
+					return
+				}
 				userChannel := strings.ToLower(msg.Username)
 				if !c.cfg.ChannelExists(userChannel) {
 					c.SendMessage(fmt.Sprintf("@%s I'm not in your channel yet! Use !join first.", msg.Username))
@@ -273,6 +276,9 @@ func (c *Client) handleMessage(raw string) {
 
 			// !global and !local - toggle between global and local brain for generation
 			if cmd == "!global" {
+				if !c.cfg.GetAllowGlobalLocalCommands() {
+					return
+				}
 				userChannel := strings.ToLower(msg.Username)
 				if !c.cfg.ChannelExists(userChannel) {
 					c.SendMessage(fmt.Sprintf("@%s I'm not in your channel yet! Use !join first.", msg.Username))
@@ -283,6 +289,9 @@ func (c *Client) handleMessage(raw string) {
 				return
 			}
 			if cmd == "!local" {
+				if !c.cfg.GetAllowGlobalLocalCommands() {
+					return
+				}
 				userChannel := strings.ToLower(msg.Username)
 				if !c.cfg.ChannelExists(userChannel) {
 					c.SendMessage(fmt.Sprintf("@%s I'm not in your channel yet! Use !join first.", msg.Username))

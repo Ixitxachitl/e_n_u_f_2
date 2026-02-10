@@ -105,6 +105,51 @@ func (c *Config) SetAllowSelfJoin(allow bool) error {
 	return c.setValue("allow_self_join", strconv.FormatBool(allow))
 }
 
+// GetDefaultBrainMode returns the default brain mode for new channels ("local" or "global")
+func (c *Config) GetDefaultBrainMode() string {
+	val := c.getValue("default_brain_mode")
+	if val == "" {
+		return "local"
+	}
+	return val
+}
+
+// SetDefaultBrainMode sets the default brain mode for new channels ("local" or "global")
+func (c *Config) SetDefaultBrainMode(mode string) error {
+	if mode != "local" && mode != "global" {
+		mode = "local"
+	}
+	return c.setValue("default_brain_mode", mode)
+}
+
+// GetAllowGlobalLocalCommands returns whether !global/!local commands are enabled
+func (c *Config) GetAllowGlobalLocalCommands() bool {
+	val := c.getValue("allow_global_local_commands")
+	if val == "" {
+		return true // Default to enabled
+	}
+	return val == "true"
+}
+
+// SetAllowGlobalLocalCommands sets whether !global/!local commands are enabled
+func (c *Config) SetAllowGlobalLocalCommands(allow bool) error {
+	return c.setValue("allow_global_local_commands", strconv.FormatBool(allow))
+}
+
+// GetAllowResponseCommand returns whether !response command is enabled
+func (c *Config) GetAllowResponseCommand() bool {
+	val := c.getValue("allow_response_command")
+	if val == "" {
+		return true // Default to enabled
+	}
+	return val == "true"
+}
+
+// SetAllowResponseCommand sets whether !response command is enabled
+func (c *Config) SetAllowResponseCommand(allow bool) error {
+	return c.setValue("allow_response_command", strconv.FormatBool(allow))
+}
+
 // IsConfigured checks if the bot is properly configured
 func (c *Config) IsConfigured() bool {
 	token := c.GetOAuthToken()

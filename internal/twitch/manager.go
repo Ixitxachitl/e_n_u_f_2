@@ -142,6 +142,10 @@ func (m *Manager) JoinChannel(channel string) error {
 	// Add to config (but not the bot's own channel)
 	if !isBotChannel {
 		m.cfg.AddChannel(channel)
+		// Apply default brain mode for new channels
+		if m.cfg.GetDefaultBrainMode() == "global" {
+			m.cfg.SetChannelUseGlobalBrain(channel, true)
+		}
 	}
 
 	log.Printf("Joined channel: %s", channel)
@@ -447,6 +451,10 @@ func (m *Manager) onCommand(channel, username, command string) {
 		} else {
 			// Channel is offline — just add to config, live monitor will join when they go live
 			m.cfg.AddChannel(userChannel)
+			// Apply default brain mode for new channels
+			if m.cfg.GetDefaultBrainMode() == "global" {
+				m.cfg.SetChannelUseGlobalBrain(userChannel, true)
+			}
 			log.Printf("Added channel %s via !join command from %s (offline, will join when live)", userChannel, username)
 			if botClient != nil {
 				botClient.SendMessage(fmt.Sprintf("@%s I've added your channel! I'll join when you go live. 🤖", username))

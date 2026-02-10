@@ -160,6 +160,20 @@
                     </div>
                     <p class="hint">This is the default interval for new channels. Each channel can have its own interval set via the slider in the Channels tab, or streamers can use <code>!response &lt;1-100&gt;</code> in chat.</p>
                 </div>
+                <div class="form-group">
+                    <label>Default brain mode for new channels:</label>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="default-brain-mode" id="brain-mode-local" value="local" checked>
+                            <span>Local</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="default-brain-mode" id="brain-mode-global" value="global">
+                            <span>Global</span>
+                        </label>
+                    </div>
+                    <p class="hint">Local uses only that channel's brain. Global combines all channel brains for generation.</p>
+                </div>
             </div>
 
             <div class="card">
@@ -170,6 +184,20 @@
                         <span>Allow !join command</span>
                     </label>
                     <p class="hint">When enabled, users can type <code>!join</code> in your channel to have the bot join their channel automatically.</p>
+                </div>
+                <div class="form-group">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="allow-global-local" checked>
+                        <span>Allow !global / !local commands</span>
+                    </label>
+                    <p class="hint">When enabled, streamers can use <code>!global</code> and <code>!local</code> to switch their channel's brain mode.</p>
+                </div>
+                <div class="form-group">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="allow-response-cmd" checked>
+                        <span>Allow !response command</span>
+                    </label>
+                    <p class="hint">When enabled, streamers can use <code>!response &lt;1-100&gt;</code> to change their channel's message interval.</p>
                 </div>
             </div>
 

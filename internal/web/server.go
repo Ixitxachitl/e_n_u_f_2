@@ -536,22 +536,28 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 
 		config := map[string]interface{}{
-			"bot_username":      s.cfg.GetBotUsername(),
-			"oauth_token_set":   tokenSet,
-			"client_id_set":     clientIDSet,
-			"message_interval":  s.cfg.GetMessageInterval(),
-			"web_port":          s.cfg.GetWebPort(),
-			"bot_profile_image": botProfileImage,
-			"allow_self_join":   s.cfg.GetAllowSelfJoin(),
-			"local_ip":          getLocalIP(),
+			"bot_username":                s.cfg.GetBotUsername(),
+			"oauth_token_set":             tokenSet,
+			"client_id_set":               clientIDSet,
+			"message_interval":            s.cfg.GetMessageInterval(),
+			"web_port":                    s.cfg.GetWebPort(),
+			"bot_profile_image":           botProfileImage,
+			"allow_self_join":             s.cfg.GetAllowSelfJoin(),
+			"default_brain_mode":          s.cfg.GetDefaultBrainMode(),
+			"allow_global_local_commands": s.cfg.GetAllowGlobalLocalCommands(),
+			"allow_response_command":      s.cfg.GetAllowResponseCommand(),
+			"local_ip":                    getLocalIP(),
 		}
 		jsonResponse(w, config)
 
 	case http.MethodPut:
 		var req struct {
-			ClientID        *string `json:"client_id"`
-			MessageInterval *int    `json:"message_interval"`
-			AllowSelfJoin   *bool   `json:"allow_self_join"`
+			ClientID             *string `json:"client_id"`
+			MessageInterval      *int    `json:"message_interval"`
+			AllowSelfJoin        *bool   `json:"allow_self_join"`
+			DefaultBrainMode     *string `json:"default_brain_mode"`
+			AllowGlobalLocal     *bool   `json:"allow_global_local_commands"`
+			AllowResponseCommand *bool   `json:"allow_response_command"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpError(w, "Invalid request", http.StatusBadRequest)
@@ -566,6 +572,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.AllowSelfJoin != nil {
 			s.cfg.SetAllowSelfJoin(*req.AllowSelfJoin)
+		}
+		if req.DefaultBrainMode != nil {
+			s.cfg.SetDefaultBrainMode(*req.DefaultBrainMode)
+		}
+		if req.AllowGlobalLocal != nil {
+			s.cfg.SetAllowGlobalLocalCommands(*req.AllowGlobalLocal)
+		}
+		if req.AllowResponseCommand != nil {
+			s.cfg.SetAllowResponseCommand(*req.AllowResponseCommand)
 		}
 
 		jsonResponse(w, map[string]string{"status": "updated"})
