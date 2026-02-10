@@ -197,11 +197,11 @@ To expose the quotes page publicly with a valid SSL certificate:
 | POST | `/api/auth/setup` | Set admin password (first time only) |
 | POST | `/api/auth/login` | Login with password |
 | POST | `/api/auth/logout` | Logout and clear session |
-| POST | `/api/auth/change-password` | Change admin password (requires auth) |
 
 ### Protected Endpoints (require auth or localhost)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST | `/api/auth/change-password` | Change admin password |
 | GET | `/api/status` | Bot status and stats |
 | GET | `/api/config` | Get current config |
 | PUT | `/api/config` | Update config |
