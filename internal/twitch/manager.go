@@ -26,14 +26,15 @@ type ChannelStatus struct {
 
 // Manager manages multiple Twitch channel connections
 type Manager struct {
-	cfg          *config.Config
-	brainMgr     *markov.Manager
-	clients      map[string]*Client
-	msgCounts    map[string]int64
-	mu           sync.RWMutex
-	running      bool
-	eventHandler func(event string, data interface{})
-	stopChan     chan struct{}
+	cfg             *config.Config
+	brainMgr        *markov.Manager
+	clients         map[string]*Client
+	msgCounts       map[string]int64
+	mu              sync.RWMutex
+	running         bool
+	eventHandler    func(event string, data interface{})
+	stopChan        chan struct{}
+	botReconnecting bool
 }
 
 // NewManager creates a new Twitch connection manager
@@ -280,24 +281,34 @@ func (m *Manager) onConnect(channel string) {
 }
 
 func (m *Manager) onDisconnect(channel string) {
-	m.mu.RLock()
+	m.mu.Lock()
 	handler := m.eventHandler
 	running := m.running
-	m.mu.RUnlock()
+	alreadyReconnecting := m.botReconnecting
+	m.mu.Unlock()
 
 	if handler != nil {
 		handler("disconnect", map[string]string{"channel": channel})
 	}
 
-	// Auto-reconnect the bot's own channel indefinitely
+	// Auto-reconnect the bot's own channel indefinitely (only one goroutine at a time)
 	botUsername := strings.ToLower(m.cfg.GetBotUsername())
-	if running && strings.ToLower(channel) == botUsername {
+	if running && strings.ToLower(channel) == botUsername && !alreadyReconnecting {
+		m.mu.Lock()
+		m.botReconnecting = true
+		m.mu.Unlock()
 		go m.reconnectBotChannel()
 	}
 }
 
 // reconnectBotChannel attempts to reconnect the bot's own channel indefinitely with exponential backoff
 func (m *Manager) reconnectBotChannel() {
+	defer func() {
+		m.mu.Lock()
+		m.botReconnecting = false
+		m.mu.Unlock()
+	}()
+
 	botUsername := strings.ToLower(m.cfg.GetBotUsername())
 	baseDelay := 5 * time.Second
 	maxDelay := 5 * time.Minute
@@ -327,7 +338,14 @@ func (m *Manager) reconnectBotChannel() {
 		// Clean up old client before reconnecting
 		m.mu.Lock()
 		if oldClient, exists := m.clients[botUsername]; exists {
-			oldClient.Disconnect()
+			// Set running=false directly to prevent Disconnect from triggering another onDisconnect
+			oldClient.mu.Lock()
+			oldClient.running = false
+			if oldClient.conn != nil {
+				oldClient.conn.Close()
+				oldClient.conn = nil
+			}
+			oldClient.mu.Unlock()
 			delete(m.clients, botUsername)
 			delete(m.msgCounts, botUsername)
 		}
