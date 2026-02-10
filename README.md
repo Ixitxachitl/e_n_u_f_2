@@ -197,6 +197,7 @@ To expose the quotes page publicly with a valid SSL certificate:
 | POST | `/api/auth/setup` | Set admin password (first time only) |
 | POST | `/api/auth/login` | Login with password |
 | POST | `/api/auth/logout` | Logout and clear session |
+| POST | `/api/auth/change-password` | Change admin password (requires auth) |
 
 ### Protected Endpoints (require auth or localhost)
 | Method | Endpoint | Description |
@@ -229,6 +230,9 @@ To expose the quotes page publicly with a valid SSL certificate:
 | POST | `/api/database` | Optimize (VACUUM) database |
 | DELETE | `/api/database` | Clean all brains |
 | GET | `/api/activity` | Get recent activity log |
+| DELETE | `/api/admin/quotes/{id}` | Delete a quote |
+| PUT | `/api/admin/quotes/{id}` | Update a quote's message |
+| WS | `/ws` | WebSocket for live activity feed |
 
 ### Public Endpoints (no auth required)
 | Method | Endpoint | Description |
@@ -237,6 +241,7 @@ To expose the quotes page publicly with a valid SSL certificate:
 | POST | `/api/quotes/{id}/vote` | Add +1 vote (requires Twitch user ID) |
 | DELETE | `/api/quotes/{id}/vote` | Remove +1 vote |
 | GET | `/api/public/client-id` | Get OAuth client ID for Twitch login |
+| GET | `/api/version` | Get bot version and commit SHA |
 | WS | `/ws/public` | WebSocket for live quote updates |
 
 ## Database Schema
