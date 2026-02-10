@@ -432,16 +432,16 @@ func (b *Brain) Clean() CleanResult {
 
 		if len(words) >= 2 {
 			// Multi-word phrase: match exact sequential words across columns
-			// For "bill nye", delete where (word1="bill" AND word2="nye") OR (word2="bill" AND next_word="nye")
+			// Use TRIM to strip punctuation so "you're, fat" matches "you're fat"
 			for i := 0; i < len(words)-1; i++ {
 				w1 := strings.ToLower(words[i])
 				w2 := strings.ToLower(words[i+1])
 
 				res, _ := b.db.Exec(`
 					DELETE FROM transitions 
-					WHERE (LOWER(word1) = ? AND LOWER(word2) = ?)
-					   OR (LOWER(word2) = ? AND LOWER(next_word) = ?)
-				`, w1, w2, w1, w2)
+					WHERE (TRIM(LOWER(word1), ?) = ? AND TRIM(LOWER(word2), ?) = ?)
+					   OR (TRIM(LOWER(word2), ?) = ? AND TRIM(LOWER(next_word), ?) = ?)
+				`, punctuationChars, w1, punctuationChars, w2, punctuationChars, w1, punctuationChars, w2)
 
 				if res != nil {
 					affected, _ := res.RowsAffected()
@@ -449,12 +449,12 @@ func (b *Brain) Clean() CleanResult {
 				}
 			}
 		} else {
-			// Single word: exact match only
+			// Single word: match after stripping punctuation from stored words
 			wordLower := strings.ToLower(word)
 			res, _ := b.db.Exec(`
 				DELETE FROM transitions 
-				WHERE LOWER(word1) = ? OR LOWER(word2) = ? OR LOWER(next_word) = ?
-			`, wordLower, wordLower, wordLower)
+				WHERE TRIM(LOWER(word1), ?) = ? OR TRIM(LOWER(word2), ?) = ? OR TRIM(LOWER(next_word), ?) = ?
+			`, punctuationChars, wordLower, punctuationChars, wordLower, punctuationChars, wordLower)
 
 			if res != nil {
 				affected, _ := res.RowsAffected()
@@ -773,23 +773,47 @@ func (b *Brain) UpdateTransitionCount(word1, word2, nextWord string, count int) 
 	return err
 }
 
+// punctuationChars contains characters to trim from word boundaries for blacklist matching
+const punctuationChars = ".,!?;:'\"()-[]{}~*_<>@#$%^&+=|\\/`"
+
+// stripWordPunctuation removes leading and trailing punctuation from a word
+func stripWordPunctuation(word string) string {
+	return strings.Trim(word, punctuationChars)
+}
+
 func (b *Brain) containsBlacklistedWord(message string) bool {
 	lowerMessage := strings.ToLower(message)
 	words := strings.Fields(lowerMessage)
+
+	// Strip punctuation from message words for comparison
+	cleanWords := make([]string, len(words))
+	for i, w := range words {
+		cleanWords[i] = stripWordPunctuation(w)
+	}
+	cleanMessage := strings.Join(cleanWords, " ")
+
 	blacklist := b.cfg.GetBlacklistedWords()
 
 	for _, blacklisted := range blacklist {
 		blacklisted = strings.ToLower(blacklisted)
 
 		if strings.Contains(blacklisted, " ") {
-			// Phrase (contains space): substring match against full message
-			if strings.Contains(lowerMessage, blacklisted) {
+			// Phrase: strip punctuation from phrase words and compare
+			phraseWords := strings.Fields(blacklisted)
+			cleanPhraseWords := make([]string, len(phraseWords))
+			for i, w := range phraseWords {
+				cleanPhraseWords[i] = stripWordPunctuation(w)
+			}
+			cleanPhrase := strings.Join(cleanPhraseWords, " ")
+
+			if strings.Contains(cleanMessage, cleanPhrase) {
 				return true
 			}
 		} else {
-			// Single word: exact word match
-			for _, word := range words {
-				if word == blacklisted {
+			// Single word: exact word match after stripping punctuation
+			cleanBlacklisted := stripWordPunctuation(blacklisted)
+			for _, word := range cleanWords {
+				if word == cleanBlacklisted {
 					return true
 				}
 			}
