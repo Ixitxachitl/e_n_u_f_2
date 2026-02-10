@@ -407,27 +407,49 @@ func (m *Manager) onCommand(channel, username, command string) {
 		// Join the user's channel
 		userChannel := strings.ToLower(username)
 
-		// Check if already in that channel
+		// Check if already in that channel (connected or in config)
 		m.mu.RLock()
-		_, exists := m.clients[userChannel]
+		_, connected := m.clients[userChannel]
 		m.mu.RUnlock()
+		inConfig := m.cfg.ChannelExists(userChannel)
 
-		if exists {
+		if connected || inConfig {
 			if botClient != nil {
 				botClient.SendMessage(fmt.Sprintf("@%s I'm already in your channel!", username))
 			}
 			return
 		}
 
-		if err := m.JoinChannel(userChannel); err != nil {
-			log.Printf("Failed to join channel %s via command: %v", userChannel, err)
-			if botClient != nil {
-				botClient.SendMessage(fmt.Sprintf("@%s Failed to join your channel: %v", username, err))
+		// Look up and store the user's Twitch ID
+		clientID := m.cfg.GetClientID()
+		oauthToken := m.cfg.GetOAuthToken()
+		if clientID != "" && oauthToken != "" {
+			ids := m.lookupUserIDs([]string{userChannel}, clientID, oauthToken)
+			if userID, ok := ids[userChannel]; ok {
+				m.cfg.SetUserIDMapping(userID, userChannel)
+			}
+		}
+
+		// Check if the user is currently live
+		if m.isChannelLive(userChannel) {
+			// Channel is live — join immediately
+			if err := m.JoinChannel(userChannel); err != nil {
+				log.Printf("Failed to join channel %s via command: %v", userChannel, err)
+				if botClient != nil {
+					botClient.SendMessage(fmt.Sprintf("@%s Failed to join your channel: %v", username, err))
+				}
+			} else {
+				log.Printf("Joined channel %s via !join command from %s", userChannel, username)
+				if botClient != nil {
+					botClient.SendMessage(fmt.Sprintf("@%s I've joined your channel! 🤖", username))
+				}
 			}
 		} else {
-			log.Printf("Joined channel %s via !join command from %s", userChannel, username)
+			// Channel is offline — just add to config, live monitor will join when they go live
+			m.cfg.AddChannel(userChannel)
+			log.Printf("Added channel %s via !join command from %s (offline, will join when live)", userChannel, username)
 			if botClient != nil {
-				botClient.SendMessage(fmt.Sprintf("@%s I've joined your channel! 🤖", username))
+				botClient.SendMessage(fmt.Sprintf("@%s I've added your channel! I'll join when you go live. 🤖", username))
 			}
 		}
 
@@ -829,6 +851,57 @@ func (m *Manager) getLiveChannelSetByID(channelIDs map[string]string, clientID, 
 	}
 
 	return
+}
+
+// isChannelLive checks if a single channel is currently live via the Twitch API
+func (m *Manager) isChannelLive(channel string) bool {
+	clientID := m.cfg.GetClientID()
+	oauthToken := m.cfg.GetOAuthToken()
+	if clientID == "" || oauthToken == "" {
+		return false
+	}
+
+	// Try to use stored user ID first, fall back to login query
+	userID := m.cfg.GetUserIDByUsername(strings.ToLower(channel))
+	var url string
+	if userID != "" {
+		url = "https://api.twitch.tv/helix/streams?user_id=" + userID
+	} else {
+		url = "https://api.twitch.tv/helix/streams?user_login=" + strings.ToLower(channel)
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false
+	}
+
+	token := strings.TrimPrefix(oauthToken, "oauth:")
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error checking live status for %s: %v", channel, err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	var apiResp struct {
+		Data []struct {
+			UserID string `json:"user_id"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return false
+	}
+
+	return len(apiResp.Data) > 0
 }
 
 // leaveChannelQuietly disconnects from a channel without removing it from config
