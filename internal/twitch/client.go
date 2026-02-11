@@ -357,6 +357,38 @@ func (c *Client) handleMessage(raw string) {
 	}
 }
 
+// unescapeIRCTag unescapes Twitch IRC tag values per the IRCv3 spec.
+// Escape sequences: \s=space, \n=newline, \r=carriage return, \:=semicolon, \\=backslash
+func unescapeIRCTag(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 's':
+				b.WriteByte(' ')
+			case 'n':
+				b.WriteByte('\n')
+			case 'r':
+				b.WriteByte('\r')
+			case ':':
+				b.WriteByte(';')
+			case '\\':
+				b.WriteByte('\\')
+			default:
+				b.WriteByte(s[i+1])
+			}
+			i++
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
 func parseMessage(raw string) *Message {
 	msg := &Message{
 		Raw:  raw,
@@ -374,7 +406,7 @@ func parseMessage(raw string) *Message {
 		for _, pair := range tagPairs {
 			kv := strings.SplitN(pair, "=", 2)
 			if len(kv) == 2 {
-				msg.Tags[kv[0]] = kv[1]
+				msg.Tags[kv[0]] = unescapeIRCTag(kv[1])
 			}
 		}
 		raw = parts[1]
@@ -417,9 +449,9 @@ func parseMessage(raw string) *Message {
 		}
 	}
 
-	// Use display-name from tags if available
+	// Use display-name from tags if available (trim whitespace from unescaped values)
 	if displayName, ok := msg.Tags["display-name"]; ok && displayName != "" {
-		msg.Username = displayName
+		msg.Username = strings.TrimSpace(displayName)
 	}
 
 	return msg

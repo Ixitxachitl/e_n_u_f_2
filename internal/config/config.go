@@ -458,9 +458,48 @@ type ActivityEntry struct {
 
 const maxActivityEntries = 50
 
+// unescapeIRCTag unescapes Twitch IRC tag escape sequences (\s=space, \n=newline, \:=semicolon, \\=backslash)
+func unescapeIRCTag(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 's':
+				b.WriteByte(' ')
+			case 'n':
+				b.WriteByte('\n')
+			case 'r':
+				b.WriteByte('\r')
+			case ':':
+				b.WriteByte(';')
+			case '\\':
+				b.WriteByte('\\')
+			default:
+				b.WriteByte(s[i+1])
+			}
+			i++
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+// cleanUsername unescapes IRC tags and trims whitespace from a username
+func cleanUsername(username string) string {
+	return strings.TrimSpace(unescapeIRCTag(username))
+}
+
 // AddActivityEntry adds a new activity entry, keeping only the most recent 50
 func (c *Config) AddActivityEntry(channel, username, message, color, emotes, badges string) error {
 	db := database.GetDB()
+
+	// Clean username of IRC escape sequences (e.g. trailing \s)
+	username = cleanUsername(username)
 
 	// Insert new entry
 	_, err := db.Exec(`
@@ -498,6 +537,8 @@ func (c *Config) GetRecentActivity() []ActivityEntry {
 	for rows.Next() {
 		var e ActivityEntry
 		rows.Scan(&e.ID, &e.Channel, &e.Username, &e.Message, &e.Color, &e.Emotes, &e.Badges, &e.CreatedAt)
+		// Clean any IRC escape sequences from stored usernames
+		e.Username = cleanUsername(e.Username)
 		entries = append(entries, e)
 	}
 	return entries
