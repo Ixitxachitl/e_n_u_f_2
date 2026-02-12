@@ -430,23 +430,38 @@ func (b *Brain) Clean() CleanResult {
 		// Check if this is a multi-word phrase
 		words := strings.Fields(word)
 
-		if len(words) >= 2 {
-			// Multi-word phrase: match exact sequential words across columns
-			// Use TRIM to strip punctuation so "you're, fat" matches "you're fat"
-			for i := 0; i < len(words)-1; i++ {
+		if len(words) >= 3 {
+			// 3+ word phrase: match complete trigram windows from the phrase
+			// For "remove the space" only delete transitions where (word1=remove, word2=the, next_word=space)
+			for i := 0; i < len(words)-2; i++ {
 				w1 := strings.ToLower(words[i])
 				w2 := strings.ToLower(words[i+1])
+				w3 := strings.ToLower(words[i+2])
 
 				res, _ := b.db.Exec(`
 					DELETE FROM transitions 
-					WHERE (TRIM(LOWER(word1), ?) = ? AND TRIM(LOWER(word2), ?) = ?)
-					   OR (TRIM(LOWER(word2), ?) = ? AND TRIM(LOWER(next_word), ?) = ?)
-				`, punctuationChars, w1, punctuationChars, w2, punctuationChars, w1, punctuationChars, w2)
+					WHERE TRIM(LOWER(word1), ?) = ? AND TRIM(LOWER(word2), ?) = ? AND TRIM(LOWER(next_word), ?) = ?
+				`, punctuationChars, w1, punctuationChars, w2, punctuationChars, w3)
 
 				if res != nil {
 					affected, _ := res.RowsAffected()
 					wordRemoved += int(affected)
 				}
+			}
+		} else if len(words) == 2 {
+			// 2-word phrase: match where both words appear adjacent in any column pair
+			w1 := strings.ToLower(words[0])
+			w2 := strings.ToLower(words[1])
+
+			res, _ := b.db.Exec(`
+				DELETE FROM transitions 
+				WHERE (TRIM(LOWER(word1), ?) = ? AND TRIM(LOWER(word2), ?) = ?)
+				   OR (TRIM(LOWER(word2), ?) = ? AND TRIM(LOWER(next_word), ?) = ?)
+			`, punctuationChars, w1, punctuationChars, w2, punctuationChars, w1, punctuationChars, w2)
+
+			if res != nil {
+				affected, _ := res.RowsAffected()
+				wordRemoved += int(affected)
 			}
 		} else {
 			// Single word: match after stripping punctuation from stored words
