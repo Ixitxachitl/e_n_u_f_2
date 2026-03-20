@@ -267,6 +267,11 @@ func (b *Brain) saveLastMessage(message string) {
 	`, message, message)
 }
 
+// SaveLastMessage is the exported version for external callers (e.g. timer messages)
+func (b *Brain) SaveLastMessage(message string) {
+	b.saveLastMessage(message)
+}
+
 // GetLastMessage returns the last message the bot sent in this channel
 func (b *Brain) GetLastMessage() string {
 	if b.db == nil {

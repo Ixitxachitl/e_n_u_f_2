@@ -154,6 +154,10 @@ func createTables() error {
 	// Migration: add display_name column for proper capitalization
 	db.Exec("ALTER TABLE channels ADD COLUMN display_name TEXT")
 
+	// Migration: add timer columns for inactivity timer feature
+	db.Exec("ALTER TABLE channels ADD COLUMN timer_enabled INTEGER DEFAULT 0")
+	db.Exec("ALTER TABLE channels ADD COLUMN timer_minutes INTEGER DEFAULT 15")
+
 	// Insert default config values if not exists
 	defaults := map[string]string{
 		"client_id":        "",

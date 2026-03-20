@@ -301,6 +301,50 @@ func (c *Client) handleMessage(raw string) {
 				c.SendMessage(fmt.Sprintf("@%s I will now use only YOUR channel's brain to generate messages!", msg.Username))
 				return
 			}
+
+			// !timer - set inactivity timer for user's channel
+			if strings.HasPrefix(cmd, "!timer") {
+				if !c.cfg.GetAllowTimerCommand() {
+					return
+				}
+				userChannel := strings.ToLower(msg.Username)
+				if !c.cfg.ChannelExists(userChannel) {
+					c.SendMessage(fmt.Sprintf("@%s I'm not in your channel yet! Use !join first.", msg.Username))
+					return
+				}
+				parts := strings.Fields(msg.Content)
+				if len(parts) == 1 {
+					// Show current setting
+					enabled := c.cfg.GetChannelTimerEnabled(userChannel)
+					minutes := c.cfg.GetChannelTimerMinutes(userChannel)
+					status := "off"
+					if enabled {
+						status = "on"
+					}
+					c.SendMessage(fmt.Sprintf("@%s Inactivity timer is %s (set to %d minutes). Use !timer on/off or !timer <1-60> to change.", msg.Username, status, minutes))
+					return
+				}
+				arg := strings.ToLower(parts[1])
+				if arg == "on" {
+					c.cfg.SetChannelTimerEnabled(userChannel, true)
+					minutes := c.cfg.GetChannelTimerMinutes(userChannel)
+					c.SendMessage(fmt.Sprintf("@%s Inactivity timer enabled! I'll generate a message after %d minutes of silence in your channel.", msg.Username, minutes))
+					return
+				}
+				if arg == "off" {
+					c.cfg.SetChannelTimerEnabled(userChannel, false)
+					c.SendMessage(fmt.Sprintf("@%s Inactivity timer disabled!", msg.Username))
+					return
+				}
+				num, err := strconv.Atoi(arg)
+				if err != nil || num < 1 || num > 60 {
+					c.SendMessage(fmt.Sprintf("@%s Use !timer on/off or !timer <1-60> to set the inactivity timer in minutes.", msg.Username))
+					return
+				}
+				c.cfg.SetChannelTimerMinutes(userChannel, num)
+				c.SendMessage(fmt.Sprintf("@%s Inactivity timer set to %d minutes!", msg.Username, num))
+				return
+			}
 		}
 
 		// !ignoreme and !listentome work in any channel

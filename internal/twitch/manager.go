@@ -30,6 +30,8 @@ type Manager struct {
 	brainMgr        *markov.Manager
 	clients         map[string]*Client
 	msgCounts       map[string]int64
+	lastActivity    map[string]time.Time // last message time per channel for inactivity timer
+	timerFired      map[string]bool      // whether timer already fired since last activity
 	mu              sync.RWMutex
 	running         bool
 	eventHandler    func(event string, data interface{})
@@ -40,11 +42,13 @@ type Manager struct {
 // NewManager creates a new Twitch connection manager
 func NewManager(cfg *config.Config) *Manager {
 	return &Manager{
-		cfg:       cfg,
-		brainMgr:  markov.NewManager(cfg),
-		clients:   make(map[string]*Client),
-		msgCounts: make(map[string]int64),
-		stopChan:  make(chan struct{}),
+		cfg:          cfg,
+		brainMgr:     markov.NewManager(cfg),
+		clients:      make(map[string]*Client),
+		msgCounts:    make(map[string]int64),
+		lastActivity: make(map[string]time.Time),
+		timerFired:   make(map[string]bool),
+		stopChan:     make(chan struct{}),
 	}
 }
 
@@ -64,6 +68,9 @@ func (m *Manager) Start() error {
 
 	// Start the live channel monitor (checks every 60 seconds)
 	go m.monitorLiveChannels()
+
+	// Start the inactivity timer monitor (checks every 30 seconds)
+	go m.monitorInactivityTimers()
 
 	// Do an immediate check for live channels
 	m.updateLiveConnections()
@@ -145,6 +152,14 @@ func (m *Manager) JoinChannel(channel string) error {
 		// Apply default brain mode for new channels
 		if m.cfg.GetDefaultBrainMode() == "global" {
 			m.cfg.SetChannelUseGlobalBrain(channel, true)
+		}
+		// Apply default timer settings for new channels
+		if m.cfg.GetDefaultTimerEnabled() {
+			m.cfg.SetChannelTimerEnabled(channel, true)
+		}
+		defaultTimerMin := m.cfg.GetDefaultTimerMinutes()
+		if defaultTimerMin != 15 {
+			m.cfg.SetChannelTimerMinutes(channel, defaultTimerMin)
 		}
 	}
 
@@ -259,6 +274,8 @@ func (m *Manager) SetEventHandler(handler func(string, interface{})) {
 func (m *Manager) onMessage(channel, username, message, color, emotes, badges string) {
 	m.mu.Lock()
 	m.msgCounts[channel]++
+	m.lastActivity[channel] = time.Now()
+	m.timerFired[channel] = false
 	handler := m.eventHandler
 	m.mu.Unlock()
 
@@ -455,6 +472,14 @@ func (m *Manager) onCommand(channel, username, command string) {
 			if m.cfg.GetDefaultBrainMode() == "global" {
 				m.cfg.SetChannelUseGlobalBrain(userChannel, true)
 			}
+			// Apply default timer settings for new channels
+			if m.cfg.GetDefaultTimerEnabled() {
+				m.cfg.SetChannelTimerEnabled(userChannel, true)
+			}
+			defaultTimerMin := m.cfg.GetDefaultTimerMinutes()
+			if defaultTimerMin != 15 {
+				m.cfg.SetChannelTimerMinutes(userChannel, defaultTimerMin)
+			}
 			log.Printf("Added channel %s via !join command from %s (offline, will join when live)", userChannel, username)
 			if botClient != nil {
 				botClient.SendMessage(fmt.Sprintf("@%s I've added your channel! I'll join when you go live. 🤖", username))
@@ -629,6 +654,142 @@ func (m *Manager) monitorLiveChannels() {
 			m.updateLiveConnections()
 		}
 	}
+}
+
+// monitorInactivityTimers periodically checks for channels with inactivity timers
+func (m *Manager) monitorInactivityTimers() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopChan:
+			return
+		case <-ticker.C:
+			m.checkInactivityTimers()
+		}
+	}
+}
+
+// checkInactivityTimers checks all connected channels and generates a message if inactive long enough
+func (m *Manager) checkInactivityTimers() {
+	botUsername := strings.ToLower(m.cfg.GetBotUsername())
+
+	m.mu.RLock()
+	channels := make([]string, 0, len(m.clients))
+	for ch := range m.clients {
+		if ch != botUsername {
+			channels = append(channels, ch)
+		}
+	}
+	m.mu.RUnlock()
+
+	now := time.Now()
+
+	for _, channel := range channels {
+		// Check if timer is enabled for this channel
+		if !m.cfg.GetChannelTimerEnabled(channel) {
+			continue
+		}
+
+		timerMinutes := m.cfg.GetChannelTimerMinutes(channel)
+		threshold := time.Duration(timerMinutes) * time.Minute
+
+		m.mu.RLock()
+		lastAct, hasActivity := m.lastActivity[channel]
+		alreadyFired := m.timerFired[channel]
+		client, clientExists := m.clients[channel]
+		m.mu.RUnlock()
+
+		// Skip if no activity recorded yet, already fired, or client missing
+		if !hasActivity || alreadyFired || !clientExists || client == nil {
+			continue
+		}
+
+		// Check if enough time has passed since last activity
+		if now.Sub(lastAct) >= threshold {
+			// Mark as fired so we don't keep generating
+			m.mu.Lock()
+			m.timerFired[channel] = true
+			m.mu.Unlock()
+
+			// Generate a message
+			go m.generateTimerMessage(channel, client)
+		}
+	}
+}
+
+// generateTimerMessage generates and sends a message due to inactivity timer
+func (m *Manager) generateTimerMessage(channel string, client *Client) {
+	brain := m.brainMgr.GetBrain(channel)
+	if brain == nil {
+		return
+	}
+
+	// Choose generator based on global brain setting
+	var generator func(int) string
+	if m.cfg.GetChannelUseGlobalBrain(channel) {
+		generator = m.brainMgr.GenerateGlobal
+	}
+
+	maxAttempts := 5
+	var response string
+	for i := 0; i < maxAttempts; i++ {
+		if generator != nil {
+			response = generator(maxAttempts)
+		} else {
+			response = brain.Generate(maxAttempts)
+		}
+		if response != "" {
+			break
+		}
+	}
+
+	if response != "" {
+		client.SendMessage(response)
+		database.SaveQuote(channel, response)
+		brain.SaveLastMessage(response)
+		log.Printf("[%s] Inactivity timer generated: %s", channel, response)
+
+		// Reset timer state so it can fire again after configured duration
+		m.mu.Lock()
+		m.lastActivity[channel] = time.Now()
+		m.timerFired[channel] = false
+		m.mu.Unlock()
+
+		// Broadcast generation event
+		m.mu.RLock()
+		handler := m.eventHandler
+		m.mu.RUnlock()
+
+		if handler != nil {
+			handler("generation", map[string]interface{}{
+				"channel":        channel,
+				"triggered":      true,
+				"success":        true,
+				"response":       response,
+				"attempts":       1,
+				"failure_reason": "",
+				"counter":        0,
+				"interval":       0,
+				"using_global":   m.cfg.GetChannelUseGlobalBrain(channel),
+				"timer":          true,
+			})
+		}
+	}
+}
+
+// GetChannelTimerInfo returns timer status for a channel
+func (m *Manager) GetChannelTimerInfo(channel string) (enabled bool, minutes int, lastActivity time.Time, fired bool) {
+	channel = strings.ToLower(channel)
+	enabled = m.cfg.GetChannelTimerEnabled(channel)
+	minutes = m.cfg.GetChannelTimerMinutes(channel)
+
+	m.mu.RLock()
+	lastActivity = m.lastActivity[channel]
+	fired = m.timerFired[channel]
+	m.mu.RUnlock()
+	return
 }
 
 // updateLiveConnections joins live channels and leaves offline channels

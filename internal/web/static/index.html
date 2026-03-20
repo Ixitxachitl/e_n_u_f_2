@@ -174,6 +174,28 @@
                     </div>
                     <p class="hint">Local uses only that channel's brain. Global combines all channel brains for generation.</p>
                 </div>
+                <div class="form-group">
+                    <label>Default timer for new channels:</label>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="default-timer-mode" id="default-timer-off" value="off" checked>
+                            <span>Off</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="default-timer-mode" id="default-timer-on" value="on">
+                            <span>On</span>
+                        </label>
+                    </div>
+                    <p class="hint">When on, new channels will have the inactivity timer enabled by default.</p>
+                </div>
+                <div class="form-group">
+                    <label>Default timer length:</label>
+                    <div class="slider-group">
+                        <input type="range" id="default-timer-slider" min="1" max="60" value="15">
+                        <span id="default-timer-value">15</span><span>m</span>
+                    </div>
+                    <p class="hint">Default inactivity timer duration for new channels (1-60 minutes).</p>
+                </div>
             </div>
 
             <div class="card">
@@ -198,6 +220,13 @@
                         <span>Allow !response command</span>
                     </label>
                     <p class="hint">When enabled, streamers can use <code>!response &lt;1-100&gt;</code> to change their channel's message interval.</p>
+                </div>
+                <div class="form-group">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="allow-timer-cmd" checked>
+                        <span>Allow !timer command</span>
+                    </label>
+                    <p class="hint">When enabled, streamers can use <code>!timer on/off</code> or <code>!timer &lt;1-60&gt;</code> to control the inactivity timer for their channel.</p>
                 </div>
             </div>
 

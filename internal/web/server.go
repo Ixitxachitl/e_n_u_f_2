@@ -546,6 +546,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"default_brain_mode":          s.cfg.GetDefaultBrainMode(),
 			"allow_global_local_commands": s.cfg.GetAllowGlobalLocalCommands(),
 			"allow_response_command":      s.cfg.GetAllowResponseCommand(),
+			"allow_timer_command":         s.cfg.GetAllowTimerCommand(),
+			"default_timer_enabled":       s.cfg.GetDefaultTimerEnabled(),
+			"default_timer_minutes":       s.cfg.GetDefaultTimerMinutes(),
 			"local_ip":                    getLocalIP(),
 		}
 		jsonResponse(w, config)
@@ -558,6 +561,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			DefaultBrainMode     *string `json:"default_brain_mode"`
 			AllowGlobalLocal     *bool   `json:"allow_global_local_commands"`
 			AllowResponseCommand *bool   `json:"allow_response_command"`
+			AllowTimerCommand    *bool   `json:"allow_timer_command"`
+			DefaultTimerEnabled  *bool   `json:"default_timer_enabled"`
+			DefaultTimerMinutes  *int    `json:"default_timer_minutes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpError(w, "Invalid request", http.StatusBadRequest)
@@ -581,6 +587,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.AllowResponseCommand != nil {
 			s.cfg.SetAllowResponseCommand(*req.AllowResponseCommand)
+		}
+		if req.AllowTimerCommand != nil {
+			s.cfg.SetAllowTimerCommand(*req.AllowTimerCommand)
+		}
+		if req.DefaultTimerEnabled != nil {
+			s.cfg.SetDefaultTimerEnabled(*req.DefaultTimerEnabled)
+		}
+		if req.DefaultTimerMinutes != nil {
+			s.cfg.SetDefaultTimerMinutes(*req.DefaultTimerMinutes)
 		}
 
 		jsonResponse(w, map[string]string{"status": "updated"})
@@ -618,6 +633,8 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 				"message_interval":  s.cfg.GetChannelMessageInterval(ch.Channel),
 				"user_id":           s.cfg.GetUserIDByUsername(ch.Channel),
 				"use_global":        s.cfg.GetChannelUseGlobalBrain(ch.Channel),
+				"timer_enabled":     s.cfg.GetChannelTimerEnabled(ch.Channel),
+				"timer_minutes":     s.cfg.GetChannelTimerMinutes(ch.Channel),
 			}
 		}
 		jsonResponse(w, result)
@@ -706,6 +723,40 @@ func (s *Server) handleChannelAction(w http.ResponseWriter, r *http.Request) {
 			}
 			s.cfg.SetChannelUseGlobalBrain(channel, req.UseGlobal)
 			jsonResponse(w, map[string]interface{}{"status": "updated", "channel": channel, "use_global": req.UseGlobal})
+			return
+		}
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check for /timer suffix (toggle/set inactivity timer)
+	if strings.HasSuffix(channel, "/timer") {
+		channel = strings.TrimSuffix(channel, "/timer")
+		if r.Method == http.MethodPut {
+			var req struct {
+				Enabled *bool `json:"enabled"`
+				Minutes *int  `json:"minutes"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				httpError(w, "Invalid request", http.StatusBadRequest)
+				return
+			}
+			if req.Enabled != nil {
+				s.cfg.SetChannelTimerEnabled(channel, *req.Enabled)
+			}
+			if req.Minutes != nil {
+				if *req.Minutes < 1 || *req.Minutes > 60 {
+					httpError(w, "Timer must be between 1 and 60 minutes", http.StatusBadRequest)
+					return
+				}
+				s.cfg.SetChannelTimerMinutes(channel, *req.Minutes)
+			}
+			jsonResponse(w, map[string]interface{}{
+				"status":        "updated",
+				"channel":       channel,
+				"timer_enabled": s.cfg.GetChannelTimerEnabled(channel),
+				"timer_minutes": s.cfg.GetChannelTimerMinutes(channel),
+			})
 			return
 		}
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1181,6 +1232,11 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	if !websocket.IsWebSocketUpgrade(r) {
+		http.Error(w, "WebSocket upgrade required", http.StatusUpgradeRequired)
+		return
+	}
+
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
@@ -1209,8 +1265,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // handlePublicWebSocket handles WebSocket connections for the public quotes page
 func (s *Server) handlePublicWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers for WebSocket handshake
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if !websocket.IsWebSocketUpgrade(r) {
+		http.Error(w, "WebSocket upgrade required", http.StatusUpgradeRequired)
+		return
+	}
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {

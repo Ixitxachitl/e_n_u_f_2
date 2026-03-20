@@ -287,6 +287,98 @@ func (c *Config) SetChannelUseGlobalBrain(channel string, useGlobal bool) error 
 	return err
 }
 
+// GetChannelTimerEnabled returns whether the inactivity timer is enabled for a channel
+func (c *Config) GetChannelTimerEnabled(channel string) bool {
+	db := database.GetDB()
+	var enabled int
+	err := db.QueryRow("SELECT timer_enabled FROM channels WHERE name = ?", strings.ToLower(channel)).Scan(&enabled)
+	if err != nil {
+		return false
+	}
+	return enabled == 1
+}
+
+// SetChannelTimerEnabled sets whether the inactivity timer is enabled for a channel
+func (c *Config) SetChannelTimerEnabled(channel string, enabled bool) error {
+	db := database.GetDB()
+	val := 0
+	if enabled {
+		val = 1
+	}
+	_, err := db.Exec("UPDATE channels SET timer_enabled = ? WHERE name = ?", val, strings.ToLower(channel))
+	return err
+}
+
+// GetChannelTimerMinutes returns the inactivity timer duration in minutes for a channel
+func (c *Config) GetChannelTimerMinutes(channel string) int {
+	db := database.GetDB()
+	var minutes int
+	err := db.QueryRow("SELECT timer_minutes FROM channels WHERE name = ?", strings.ToLower(channel)).Scan(&minutes)
+	if err != nil || minutes == 0 {
+		return 15 // Default 15 minutes
+	}
+	return minutes
+}
+
+// SetChannelTimerMinutes sets the inactivity timer duration in minutes for a channel (1-60)
+func (c *Config) SetChannelTimerMinutes(channel string, minutes int) error {
+	if minutes < 1 {
+		minutes = 1
+	}
+	if minutes > 60 {
+		minutes = 60
+	}
+	db := database.GetDB()
+	_, err := db.Exec("UPDATE channels SET timer_minutes = ? WHERE name = ?", minutes, strings.ToLower(channel))
+	return err
+}
+
+// GetAllowTimerCommand returns whether !timer command is enabled for users
+func (c *Config) GetAllowTimerCommand() bool {
+	val := c.getValue("allow_timer_command")
+	if val == "" {
+		return true // Default to enabled
+	}
+	return val == "true"
+}
+
+// SetAllowTimerCommand sets whether !timer command is enabled for users
+func (c *Config) SetAllowTimerCommand(allow bool) error {
+	return c.setValue("allow_timer_command", strconv.FormatBool(allow))
+}
+
+// GetDefaultTimerEnabled returns the default timer enabled state for new channels
+func (c *Config) GetDefaultTimerEnabled() bool {
+	val := c.getValue("default_timer_enabled")
+	return val == "true"
+}
+
+// SetDefaultTimerEnabled sets the default timer enabled state for new channels
+func (c *Config) SetDefaultTimerEnabled(enabled bool) error {
+	return c.setValue("default_timer_enabled", strconv.FormatBool(enabled))
+}
+
+// GetDefaultTimerMinutes returns the default timer duration in minutes for new channels
+func (c *Config) GetDefaultTimerMinutes() int {
+	val := c.getValue("default_timer_minutes")
+	minutes, _ := strconv.Atoi(val)
+	if minutes == 0 {
+		return 15
+	}
+	return minutes
+}
+
+// SetDefaultTimerMinutes sets the default timer duration in minutes for new channels (1-60)
+func (c *Config) SetDefaultTimerMinutes(minutes int) error {
+	if minutes < 1 {
+		minutes = 1
+	}
+	if minutes > 60 {
+		minutes = 60
+	}
+	return c.setValue("default_timer_minutes", strconv.Itoa(minutes))
+}
+
 // SetChannelDisplayName stores the display name for a channel
 func (c *Config) SetChannelDisplayName(channel, displayName string) error {
 	db := database.GetDB()

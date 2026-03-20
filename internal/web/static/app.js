@@ -313,8 +313,13 @@ function cacheElements() {
     elements.allowSelfJoin = document.getElementById('allow-self-join');
     elements.allowGlobalLocal = document.getElementById('allow-global-local');
     elements.allowResponseCmd = document.getElementById('allow-response-cmd');
+    elements.allowTimerCmd = document.getElementById('allow-timer-cmd');
     elements.brainModeLocal = document.getElementById('brain-mode-local');
     elements.brainModeGlobal = document.getElementById('brain-mode-global');
+    elements.defaultTimerOff = document.getElementById('default-timer-off');
+    elements.defaultTimerOn = document.getElementById('default-timer-on');
+    elements.defaultTimerSlider = document.getElementById('default-timer-slider');
+    elements.defaultTimerValue = document.getElementById('default-timer-value');
     elements.newChannel = document.getElementById('new-channel');
     elements.newBlacklistWord = document.getElementById('new-blacklist-word');
     elements.newIgnoredUser = document.getElementById('new-ignored-user');
@@ -406,6 +411,11 @@ function setupEventListeners() {
         await api.put('/api/config', { allow_response_command: elements.allowResponseCmd.checked });
     });
 
+    // Timer command toggle
+    elements.allowTimerCmd.addEventListener('change', async () => {
+        await api.put('/api/config', { allow_timer_command: elements.allowTimerCmd.checked });
+    });
+
     // Default brain mode radio buttons
     elements.brainModeLocal.addEventListener('change', async () => {
         if (elements.brainModeLocal.checked) {
@@ -416,6 +426,26 @@ function setupEventListeners() {
         if (elements.brainModeGlobal.checked) {
             await api.put('/api/config', { default_brain_mode: 'global' });
         }
+    });
+
+    // Default timer mode radio buttons
+    elements.defaultTimerOff.addEventListener('change', async () => {
+        if (elements.defaultTimerOff.checked) {
+            await api.put('/api/config', { default_timer_enabled: false });
+        }
+    });
+    elements.defaultTimerOn.addEventListener('change', async () => {
+        if (elements.defaultTimerOn.checked) {
+            await api.put('/api/config', { default_timer_enabled: true });
+        }
+    });
+
+    // Default timer length slider
+    elements.defaultTimerSlider.addEventListener('input', () => {
+        elements.defaultTimerValue.textContent = elements.defaultTimerSlider.value;
+    });
+    elements.defaultTimerSlider.addEventListener('change', async () => {
+        await api.put('/api/config', { default_timer_minutes: parseInt(elements.defaultTimerSlider.value) });
     });
 
     // Channel search
@@ -727,12 +757,27 @@ async function loadConfig() {
     // Set response command toggle
     elements.allowResponseCmd.checked = config.allow_response_command !== false;
     
+    // Set timer command toggle
+    elements.allowTimerCmd.checked = config.allow_timer_command !== false;
+    
     // Set default brain mode
     if (config.default_brain_mode === 'global') {
         elements.brainModeGlobal.checked = true;
     } else {
         elements.brainModeLocal.checked = true;
     }
+    
+    // Set default timer mode
+    if (config.default_timer_enabled) {
+        elements.defaultTimerOn.checked = true;
+    } else {
+        elements.defaultTimerOff.checked = true;
+    }
+    
+    // Set default timer length
+    const defaultTimerMin = config.default_timer_minutes || 15;
+    elements.defaultTimerSlider.value = defaultTimerMin;
+    elements.defaultTimerValue.textContent = defaultTimerMin;
     
     // Set redirect URL - use internal IP if available for clarity
     const protocol = window.location.protocol;
@@ -867,8 +912,10 @@ function renderChannels(channels) {
         const interval = ch.message_interval || 35;
         const userIdText = ch.user_id ? `ID: ${ch.user_id}` : 'ID: pending';
         const useGlobal = ch.use_global || false;
+        const timerEnabled = ch.timer_enabled || false;
+        const timerMinutes = ch.timer_minutes || 15;
         return `
-        <div class="list-item">
+        <div class="list-item channel-item">
             <div class="info">
                 <div class="name">
                     ${profileImg}
@@ -876,23 +923,44 @@ function renderChannels(channels) {
                 </div>
                 <div class="stats">${ch.messages.toLocaleString()} messages${!ch.connected ? ' • offline' : ''} • ${userIdText}</div>
             </div>
-            <div class="channel-interval">
-                <span class="interval-value">${interval}</span>
-                <input type="range" min="1" max="100" value="${interval}" 
-                    onchange="updateChannelInterval('${ch.channel}', this.value)" 
-                    oninput="this.previousElementSibling.textContent = this.value"
-                    onclick="event.stopPropagation()">
-            </div>
-            <div class="channel-brain-toggle">
-                <label class="toggle-label small" title="Global: Use all brains for generation&#10;Local: Use only this channel's brain&#10;(Learning always uses this channel's brain)">
-                    <input type="checkbox" ${useGlobal ? 'checked' : ''} 
-                        onchange="toggleGlobalBrain('${ch.channel}', this.checked)"
-                        data-channel="${ch.channel}">
-                    <span>${useGlobal ? 'Global' : 'Local'}</span>
-                </label>
-            </div>
-            <div class="actions">
-                <button class="btn danger" onclick="removeChannel('${ch.channel}')">Remove</button>
+            <div class="channel-controls">
+                <div class="channel-controls-row">
+                    <div class="channel-interval">
+                        <span class="interval-value">${interval}</span>
+                        <input type="range" min="1" max="100" value="${interval}" 
+                            onchange="updateChannelInterval('${ch.channel}', this.value)" 
+                            oninput="this.previousElementSibling.textContent = this.value"
+                            onclick="event.stopPropagation()">
+                    </div>
+                    <div class="channel-brain-toggle">
+                        <label class="toggle-label small" title="Global: Use all brains for generation&#10;Local: Use only this channel's brain&#10;(Learning always uses this channel's brain)">
+                            <input type="checkbox" ${useGlobal ? 'checked' : ''} 
+                                onchange="toggleGlobalBrain('${ch.channel}', this.checked)"
+                                data-channel="${ch.channel}">
+                            <span>${useGlobal ? 'Global' : 'Local'}</span>
+                        </label>
+                    </div>
+                    <div class="actions">
+                        <button class="btn danger" onclick="removeChannel('${ch.channel}')">Remove</button>
+                    </div>
+                </div>
+                <div class="channel-controls-row">
+                    <div class="channel-timer-slider">
+                        <span class="timer-value" id="timer-val-${ch.channel}">${timerMinutes}m</span>
+                        <input type="range" min="1" max="60" value="${timerMinutes}" 
+                            onchange="updateChannelTimer('${ch.channel}', this.value)"
+                            oninput="document.getElementById('timer-val-${ch.channel}').textContent = this.value + 'm'"
+                            onclick="event.stopPropagation()">
+                    </div>
+                    <div class="channel-timer-toggle">
+                        <label class="toggle-label small" title="Inactivity Timer: Generate a message after chat is silent for the set duration">
+                            <input type="checkbox" ${timerEnabled ? 'checked' : ''} 
+                                onchange="toggleChannelTimer('${ch.channel}', this.checked)"
+                                data-timer-channel="${ch.channel}">
+                            <span>Timer</span>
+                        </label>
+                    </div>
+                </div>
             </div>
         </div>
     `}).join('');
@@ -967,6 +1035,38 @@ async function toggleGlobalBrain(channel, useGlobal) {
         showToast(`${channel} now uses ${mode} for generation`, 'success');
     } catch (err) {
         showToast('Failed to update brain mode', 'error');
+    }
+}
+
+async function toggleChannelTimer(channel, enabled) {
+    try {
+        await fetch(`/api/channels/${channel}/timer`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled })
+        });
+        
+        showToast(`${channel} inactivity timer ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    } catch (err) {
+        showToast('Failed to update timer', 'error');
+    }
+}
+
+async function updateChannelTimer(channel, minutes) {
+    const num = parseInt(minutes);
+    if (isNaN(num) || num < 1 || num > 60) {
+        showToast('Timer must be between 1 and 60 minutes', 'error');
+        return;
+    }
+    try {
+        await fetch(`/api/channels/${channel}/timer`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ minutes: num })
+        });
+        showToast(`${channel} timer set to ${num}m`, 'success');
+    } catch (err) {
+        showToast('Failed to update timer', 'error');
     }
 }
 
@@ -1146,6 +1246,7 @@ function addGenerationEntry(data) {
     
     // Also refresh channel list to update countdown
     loadChannels();
+    loadLiveChannels();
 }
 
 function renderActivityLog() {
