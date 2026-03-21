@@ -1,11 +1,14 @@
 package markov
 
 import (
+	"database/sql"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	_ "modernc.org/sqlite"
 
 	"twitchbot/internal/config"
 	"twitchbot/internal/database"
@@ -105,7 +108,9 @@ func (m *Manager) GetLastMessage(channel string) string {
 	return brain.GetLastMessage()
 }
 
-// ListBrains returns stats for all channels with brain data
+// ListBrains returns stats for all channels with brain data.
+// For brains already loaded in memory, it uses the in-memory instance.
+// For brains only on disk, it queries the DB directly without permanently loading them.
 func (m *Manager) ListBrains() []BrainStats {
 	brainsDir := filepath.Join(database.GetDataDir(), "brains")
 
@@ -130,11 +135,45 @@ func (m *Manager) ListBrains() []BrainStats {
 		}
 
 		channel := strings.TrimSuffix(name, ".db")
-		brain := m.GetBrain(channel)
-		if brain != nil {
+
+		// Check if brain is already loaded — use it directly
+		m.mu.RLock()
+		brain, loaded := m.brains[channel]
+		m.mu.RUnlock()
+
+		if loaded && brain != nil {
 			stats = append(stats, brain.GetStats())
+		} else {
+			// Query stats from the DB file without permanently loading the brain
+			s := m.getStatsFromFile(channel, brainsDir)
+			stats = append(stats, s)
 		}
 	}
+
+	return stats
+}
+
+// getStatsFromFile queries brain stats directly from a database file on disk
+func (m *Manager) getStatsFromFile(channel, brainsDir string) BrainStats {
+	stats := BrainStats{Channel: channel}
+
+	dbPath := filepath.Join(brainsDir, channel+".db")
+	if info, err := os.Stat(dbPath); err == nil {
+		stats.DbSize = info.Size()
+	}
+
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&mode=ro")
+	if err != nil {
+		return stats
+	}
+	defer db.Close()
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(0)
+
+	db.QueryRow(`SELECT COUNT(DISTINCT word1 || '|' || word2) FROM transitions`).Scan(&stats.UniquePairs)
+	db.QueryRow(`SELECT COUNT(*) FROM transitions`).Scan(&stats.TotalEntries)
+	stats.MessageCount, _, _ = m.cfg.GetChannelStats(channel)
 
 	return stats
 }

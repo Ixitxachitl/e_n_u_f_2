@@ -121,9 +121,19 @@ func (c *Client) ConnectWithRetry(maxRetries int, baseDelay time.Duration) error
 
 	c.writer = bufio.NewWriter(c.conn)
 
-	// Authenticate
-	c.sendRaw("PASS " + oauthToken)
-	c.sendRaw("NICK " + botUsername)
+	// Authenticate - check connection is still valid after each write
+	if err := c.sendRawErr("PASS " + oauthToken); err != nil {
+		c.conn.Close()
+		c.conn = nil
+		c.writer = nil
+		return fmt.Errorf("failed to authenticate: %w", err)
+	}
+	if err := c.sendRawErr("NICK " + botUsername); err != nil {
+		c.conn.Close()
+		c.conn = nil
+		c.writer = nil
+		return fmt.Errorf("failed to send nick: %w", err)
+	}
 
 	// Request capabilities for tags
 	c.sendRaw("CAP REQ :twitch.tv/tags twitch.tv/commands")
@@ -210,6 +220,17 @@ func (c *Client) sendRaw(message string) {
 	}
 	c.writer.WriteString(message + "\r\n")
 	c.writer.Flush()
+}
+
+// sendRawErr is like sendRaw but returns errors for connection setup
+func (c *Client) sendRawErr(message string) error {
+	if c.writer == nil {
+		return fmt.Errorf("writer is nil")
+	}
+	if _, err := c.writer.WriteString(message + "\r\n"); err != nil {
+		return err
+	}
+	return c.writer.Flush()
 }
 
 func (c *Client) handleMessage(raw string) {

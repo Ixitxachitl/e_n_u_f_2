@@ -79,6 +79,11 @@ func (b *Brain) initDB() error {
 		return err
 	}
 
+	// Limit connection pool to reduce memory usage on constrained devices
+	b.db.SetMaxOpenConns(1)
+	b.db.SetMaxIdleConns(1)
+	b.db.SetConnMaxIdleTime(5 * time.Minute)
+
 	// Create transitions table
 	_, err = b.db.Exec(`
 		CREATE TABLE IF NOT EXISTS transitions (

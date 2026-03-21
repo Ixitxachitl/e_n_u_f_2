@@ -183,6 +183,12 @@ func (m *Manager) LeaveChannel(channel string) {
 		client.Disconnect()
 	}
 
+	// Clean up timer tracking maps
+	m.mu.Lock()
+	delete(m.lastActivity, channel)
+	delete(m.timerFired, channel)
+	m.mu.Unlock()
+
 	// Delete the brain data for this channel
 	if err := m.brainMgr.DeleteBrain(channel); err != nil {
 		log.Printf("Warning: failed to delete brain for %s: %v", channel, err)
@@ -721,6 +727,10 @@ func (m *Manager) checkInactivityTimers() {
 
 // generateTimerMessage generates and sends a message due to inactivity timer
 func (m *Manager) generateTimerMessage(channel string, client *Client) {
+	if !client.IsConnected() {
+		return
+	}
+
 	brain := m.brainMgr.GetBrain(channel)
 	if brain == nil {
 		return
@@ -751,7 +761,8 @@ func (m *Manager) generateTimerMessage(channel string, client *Client) {
 		brain.SaveLastMessage(response)
 		log.Printf("[%s] Inactivity timer generated: %s", channel, response)
 
-		// Reset timer state so it can fire again after configured duration
+		// Update lastActivity so the timer can fire again after the configured
+		// duration. Reset timerFired so the next check will re-evaluate.
 		m.mu.Lock()
 		m.lastActivity[channel] = time.Now()
 		m.timerFired[channel] = false
