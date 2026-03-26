@@ -126,6 +126,7 @@ func (m *Manager) JoinChannel(channel string) error {
 		m.onDisconnect,
 		m.onCommand,
 		m.onBanned,
+		m.onFollowersOnly,
 		m.onGeneration,
 	)
 
@@ -171,6 +172,12 @@ func (m *Manager) JoinChannel(channel string) error {
 func (m *Manager) LeaveChannel(channel string) {
 	channel = strings.ToLower(channel)
 
+	// Never leave the bot's own channel
+	if channel == strings.ToLower(m.cfg.GetBotUsername()) {
+		log.Printf("Ignoring LeaveChannel for bot's own channel: %s", channel)
+		return
+	}
+
 	m.mu.Lock()
 	client, exists := m.clients[channel]
 	if exists {
@@ -189,9 +196,12 @@ func (m *Manager) LeaveChannel(channel string) {
 	delete(m.timerFired, channel)
 	m.mu.Unlock()
 
-	// Delete the brain data for this channel
-	if err := m.brainMgr.DeleteBrain(channel); err != nil {
-		log.Printf("Warning: failed to delete brain for %s: %v", channel, err)
+	// Delete the brain data for this channel (bot's own channel never has a brain)
+	botUsername := strings.ToLower(m.cfg.GetBotUsername())
+	if channel != botUsername {
+		if err := m.brainMgr.DeleteBrain(channel); err != nil {
+			log.Printf("Warning: failed to delete brain for %s: %v", channel, err)
+		}
 	}
 
 	// Always remove from config, even if not currently connected
@@ -411,6 +421,101 @@ func (m *Manager) onGeneration(channel string, result markov.GenerationResult) {
 func (m *Manager) onBanned(channel string) {
 	log.Printf("Bot was banned from channel: %s - leaving channel", channel)
 	m.LeaveChannel(channel)
+}
+
+func (m *Manager) onFollowersOnly(channel string) {
+	// Only act on followers-only mode if the channel is actually live.
+	// Many streamers enable followers-only when offline.
+	if !m.isChannelLive(channel) {
+		log.Printf("[%s] Followers-only mode detected but channel is offline — ignoring", channel)
+		return
+	}
+
+	// If the bot is following this channel, it can still chat — skip.
+	if m.isBotFollowing(channel) {
+		log.Printf("[%s] Followers-only mode but bot is following — staying", channel)
+		return
+	}
+
+	log.Printf("[%s] Live channel has followers-only mode — sending whisper and leaving", channel)
+
+	whisperMsg := fmt.Sprintf("Hi! I had to leave your channel because it's in followers-only mode, "+
+		"which prevents me from chatting. If you disable followers-only mode, "+
+		"you can re-add me by typing !join in my channel (twitch.tv/%s). "+
+		"Thanks!", strings.ToLower(m.cfg.GetBotUsername()))
+
+	// Broadcast event for web UI activity log
+	m.mu.RLock()
+	handler := m.eventHandler
+	m.mu.RUnlock()
+
+	if handler != nil {
+		handler("followers_only", map[string]string{
+			"channel": channel,
+			"message": whisperMsg,
+		})
+	}
+
+	// Send a whisper to the channel owner explaining the situation
+	go func() {
+		err := m.sendWhisper(channel, whisperMsg)
+		if err != nil {
+			log.Printf("Failed to send whisper to %s: %v", channel, err)
+		}
+	}()
+
+	m.LeaveChannel(channel)
+}
+
+// sendWhisper sends a whisper (DM) to a user via the Twitch Helix API
+func (m *Manager) sendWhisper(toUsername, message string) error {
+	clientID := m.cfg.GetClientID()
+	oauthToken := m.cfg.GetOAuthToken()
+	if clientID == "" || oauthToken == "" {
+		return fmt.Errorf("missing client ID or OAuth token")
+	}
+
+	token := strings.TrimPrefix(oauthToken, "oauth:")
+
+	// Look up the bot's own user ID
+	botUserID, _, _ := m.lookupTwitchUser(m.cfg.GetBotUsername(), clientID, oauthToken)
+	if botUserID == "" {
+		return fmt.Errorf("could not look up bot user ID")
+	}
+
+	// Look up the target user's ID
+	toUserID, _, _ := m.lookupTwitchUser(toUsername, clientID, oauthToken)
+	if toUserID == "" {
+		return fmt.Errorf("could not look up user ID for %s", toUsername)
+	}
+
+	// POST /helix/whispers
+	url := fmt.Sprintf("https://api.twitch.tv/helix/whispers?from_user_id=%s&to_user_id=%s", botUserID, toUserID)
+
+	body := fmt.Sprintf(`{"message":%q}`, message)
+	req, err := http.NewRequest("POST", url, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("whisper API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("whisper API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	log.Printf("Sent whisper to %s about followers-only mode", toUsername)
+	return nil
 }
 
 func (m *Manager) onCommand(channel, username, command string) {
@@ -1074,6 +1179,65 @@ func (m *Manager) isChannelLive(channel string) bool {
 	var apiResp struct {
 		Data []struct {
 			UserID string `json:"user_id"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return false
+	}
+
+	return len(apiResp.Data) > 0
+}
+
+// isBotFollowing checks if the bot account is following a channel via the Twitch Helix API
+func (m *Manager) isBotFollowing(channel string) bool {
+	clientID := m.cfg.GetClientID()
+	oauthToken := m.cfg.GetOAuthToken()
+	if clientID == "" || oauthToken == "" {
+		return false
+	}
+
+	token := strings.TrimPrefix(oauthToken, "oauth:")
+
+	// Get bot user ID
+	botUserID, _, _ := m.lookupTwitchUser(m.cfg.GetBotUsername(), clientID, oauthToken)
+	if botUserID == "" {
+		return false
+	}
+
+	// Get channel user ID
+	channelUserID := m.cfg.GetUserIDByUsername(strings.ToLower(channel))
+	if channelUserID == "" {
+		channelUserID, _, _ = m.lookupTwitchUser(channel, clientID, oauthToken)
+		if channelUserID == "" {
+			return false
+		}
+	}
+
+	url := fmt.Sprintf("https://api.twitch.tv/helix/channels/followed?user_id=%s&broadcaster_id=%s", botUserID, channelUserID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false
+	}
+
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error checking follow status for %s: %v", channel, err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	var apiResp struct {
+		Data []struct {
+			BroadcasterID string `json:"broadcaster_id"`
 		} `json:"data"`
 	}
 

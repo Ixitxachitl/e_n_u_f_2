@@ -296,7 +296,7 @@ func (s *Server) handleTwitchAuth(w http.ResponseWriter, r *http.Request) {
 
 	// Build Twitch OAuth URL with force_verify
 	authURL := fmt.Sprintf(
-		"https://id.twitch.tv/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=token&scope=chat:read+chat:edit&force_verify=true",
+		"https://id.twitch.tv/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=token&scope=chat:read+chat:edit+user:manage:whispers+user:read:follows&force_verify=true",
 		clientID,
 		redirectURI,
 	)

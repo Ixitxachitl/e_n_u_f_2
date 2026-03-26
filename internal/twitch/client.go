@@ -35,6 +35,7 @@ type Client struct {
 	onDisconnect    func(channel string)
 	onCommand       func(channel, username, command string)
 	onBanned        func(channel string)
+	onFollowersOnly func(channel string)
 	onGeneration    func(channel string, result markov.GenerationResult)
 	globalGenerator func(int) string // Function to generate from all brains
 }
@@ -60,12 +61,13 @@ func NewClient(channel string, cfg *config.Config, brain *markov.Brain) *Client 
 }
 
 // SetCallbacks sets the callback functions
-func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string), onGeneration func(string, markov.GenerationResult)) {
+func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string), onFollowersOnly func(string), onGeneration func(string, markov.GenerationResult)) {
 	c.onMessage = onMessage
 	c.onConnect = onConnect
 	c.onDisconnect = onDisconnect
 	c.onCommand = onCommand
 	c.onBanned = onBanned
+	c.onFollowersOnly = onFollowersOnly
 	c.onGeneration = onGeneration
 }
 
@@ -409,6 +411,18 @@ func (c *Client) handleMessage(raw string) {
 				log.Printf("[%s] Bot is BANNED from this channel!", c.channel)
 				if c.onBanned != nil {
 					c.onBanned(c.channel)
+				}
+			}
+		}
+
+	case "ROOMSTATE":
+		// Check for followers-only mode
+		if followersOnly, ok := msg.Tags["followers-only"]; ok && followersOnly != "-1" {
+			// Skip if this is the bot's own channel
+			if !strings.EqualFold(c.channel, c.cfg.GetBotUsername()) {
+				log.Printf("[%s] Channel has followers-only mode enabled (value: %s)", c.channel, followersOnly)
+				if c.onFollowersOnly != nil {
+					c.onFollowersOnly(c.channel)
 				}
 			}
 		}

@@ -586,6 +586,10 @@ function handleWebSocketEvent(data) {
     } else if (data.event === 'connect' || data.event === 'disconnect') {
         loadChannels();
         loadStatus();
+    } else if (data.event === 'followers_only') {
+        const d = data.data;
+        addSystemEntry(d.channel, `🚫 Left channel — followers-only mode. Whispered: "${d.message}"`);
+        loadChannels();
     } else if (data.event === 'new_quote') {
         // Auto-refresh quotes list if on first page
         if (quotesState.page === 1) {
@@ -1201,6 +1205,24 @@ function renderIgnoredUsers(users) {
 function addLogEntry(channel, username, message, color = '', emotes = '', badges = '') {
     const time = new Date().toLocaleTimeString();
     activityLog.unshift({ time, channel, username, message, color, emotes, badges });
+    
+    if (activityLog.length > MAX_LOG_ENTRIES) {
+        activityLog.pop();
+    }
+
+    renderActivityLog();
+}
+
+function addSystemEntry(channel, message) {
+    const time = new Date().toLocaleTimeString();
+    activityLog.unshift({ 
+        time, 
+        channel, 
+        username: 'SYSTEM', 
+        message,
+        isGeneration: true,
+        statusClass: 'generation-failed'
+    });
     
     if (activityLog.length > MAX_LOG_ENTRIES) {
         activityLog.pop();

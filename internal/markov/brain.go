@@ -677,21 +677,29 @@ func (b *Brain) Delete() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Close the database connection
+	// Close the database connection first
 	if b.db != nil {
-		b.db.Close()
+		if err := b.db.Close(); err != nil {
+			log.Printf("Warning: error closing brain DB for %s: %v", b.Channel, err)
+		}
 		b.db = nil
 	}
 
-	// Delete the database file
+	// Delete the database files
 	brainsDir := filepath.Join(database.GetDataDir(), "brains")
 	dbPath := filepath.Join(brainsDir, b.Channel+".db")
 
-	// Also delete WAL and SHM files if they exist
+	// Remove WAL and SHM files first (they depend on the main db)
 	os.Remove(dbPath + "-wal")
 	os.Remove(dbPath + "-shm")
 
-	return os.Remove(dbPath)
+	if err := os.Remove(dbPath); err != nil {
+		log.Printf("Error removing brain file %s: %v", dbPath, err)
+		return err
+	}
+
+	log.Printf("Deleted brain files for %s", b.Channel)
+	return nil
 }
 
 // Optimize runs VACUUM on the brain database

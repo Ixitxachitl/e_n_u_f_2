@@ -200,6 +200,7 @@ func (m *Manager) DeleteBrain(channel string) error {
 	m.mu.Unlock()
 
 	if exists {
+		log.Printf("Deleting loaded brain for %s", channel)
 		return brain.Delete()
 	}
 
@@ -207,10 +208,24 @@ func (m *Manager) DeleteBrain(channel string) error {
 	brainsDir := filepath.Join(database.GetDataDir(), "brains")
 	dbPath := filepath.Join(brainsDir, channel+".db")
 
+	log.Printf("Deleting brain files directly for %s (path: %s)", channel, dbPath)
+
+	// Check if the file even exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		log.Printf("Brain file does not exist for %s, nothing to delete", channel)
+		return nil
+	}
+
 	os.Remove(dbPath + "-wal")
 	os.Remove(dbPath + "-shm")
 
-	return os.Remove(dbPath)
+	if err := os.Remove(dbPath); err != nil {
+		log.Printf("Error deleting brain file for %s: %v", channel, err)
+		return err
+	}
+
+	log.Printf("Successfully deleted brain files for %s", channel)
+	return nil
 }
 
 // CleanBrain cleans a specific brain of blacklisted words
