@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -60,7 +61,7 @@ func main() {
 	// Start web server
 	webServer := web.NewServer(cfg, manager, Version, CommitSHA)
 	go func() {
-		if err := webServer.Start(); err != nil {
+		if err := webServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Web server error: %v", err)
 		}
 	}()
@@ -76,7 +77,8 @@ func main() {
 	<-sigChan
 
 	log.Println("Shutting down...")
+	webServer.Stop()
 	manager.Stop()
 	manager.GetBrainManager().Close()
-	webServer.Stop()
+	log.Println("Shutdown complete.")
 }
