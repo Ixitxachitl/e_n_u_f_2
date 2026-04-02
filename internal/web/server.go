@@ -1344,11 +1344,15 @@ func (s *Server) broadcastEvent(event string, data interface{}) {
 				message = fmt.Sprintf("⚠️ Generation failed after %d attempt(s): %s", attempts, reason)
 			}
 
-			username := "e_n_u_f"
+			botName := s.cfg.GetBotUsername()
+			if botName == "" {
+				botName = "bot"
+			}
+			username := botName
 			if usingGlobal {
-				username = "e_n_u_f (global)"
+				username = botName + " (global)"
 			} else {
-				username = "e_n_u_f (local)"
+				username = botName + " (local)"
 			}
 
 			s.cfg.AddActivityEntry(channel, username, message, "", "", "")

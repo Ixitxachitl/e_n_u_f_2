@@ -44,6 +44,7 @@ const api = {
 
 // State
 let ws = null;
+let appInitialized = false;
 const activityLog = [];
 const MAX_LOG_ENTRIES = 50;
 const appRamHistory = [];
@@ -278,6 +279,13 @@ function setupAuthListeners() {
 
 // Initialize the main application
 function initializeApp() {
+    if (appInitialized) {
+        // Re-login: just reconnect WebSocket and refresh data
+        connectWebSocket();
+        loadInitialData();
+        return;
+    }
+    appInitialized = true;
     cacheElements();
     setupTabs();
     restoreSavedTab();
@@ -572,6 +580,12 @@ async function changePassword() {
 
 // WebSocket
 function connectWebSocket() {
+    // Close existing connection if any
+    if (ws) {
+        ws.onclose = null; // Prevent reconnect loop
+        ws.close();
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
@@ -583,7 +597,10 @@ function connectWebSocket() {
     ws.onclose = () => {
         elements.statusIndicator.textContent = 'Disconnected';
         elements.statusIndicator.className = 'status-badge disconnected';
-        setTimeout(connectWebSocket, 3000);
+        // Only auto-reconnect if still authenticated
+        if (isAuthenticated) {
+            setTimeout(connectWebSocket, 3000);
+        }
     };
 
     ws.onmessage = (event) => {
