@@ -1290,7 +1290,7 @@ function addGenerationEntry(data) {
     activityLog.unshift({ 
         time, 
         channel: data.channel, 
-        username: 'e_n_u_f' + globalLabel, 
+        username: (botUsername || 'bot') + globalLabel, 
         message,
         isGeneration: true,
         statusClass
