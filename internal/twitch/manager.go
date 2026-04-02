@@ -126,7 +126,6 @@ func (m *Manager) JoinChannel(channel string) error {
 		m.onDisconnect,
 		m.onCommand,
 		m.onBanned,
-		m.onFollowersOnly,
 		m.onGeneration,
 	)
 
@@ -420,50 +419,6 @@ func (m *Manager) onGeneration(channel string, result markov.GenerationResult) {
 
 func (m *Manager) onBanned(channel string) {
 	log.Printf("Bot was banned from channel: %s - leaving channel", channel)
-	m.LeaveChannel(channel)
-}
-
-func (m *Manager) onFollowersOnly(channel string) {
-	// Only act on followers-only mode if the channel is actually live.
-	// Many streamers enable followers-only when offline.
-	if !m.isChannelLive(channel) {
-		log.Printf("[%s] Followers-only mode detected but channel is offline — ignoring", channel)
-		return
-	}
-
-	// If the bot is following this channel, it can still chat — skip.
-	if m.isBotFollowing(channel) {
-		log.Printf("[%s] Followers-only mode but bot is following — staying", channel)
-		return
-	}
-
-	log.Printf("[%s] Live channel has followers-only mode — sending whisper and leaving", channel)
-
-	whisperMsg := fmt.Sprintf("Hi! I had to leave your channel because it's in followers-only mode, "+
-		"which prevents me from chatting. If you disable followers-only mode, "+
-		"you can re-add me by typing !join in my channel (twitch.tv/%s). "+
-		"Thanks!", strings.ToLower(m.cfg.GetBotUsername()))
-
-	// Broadcast event for web UI activity log
-	m.mu.RLock()
-	handler := m.eventHandler
-	m.mu.RUnlock()
-
-	if handler != nil {
-		handler("followers_only", map[string]string{
-			"channel": channel,
-			"message": whisperMsg,
-		})
-	}
-
-	// Send a whisper to the channel owner explaining the situation
-	go func() {
-		err := m.sendWhisper(channel, whisperMsg)
-		if err != nil {
-			log.Printf("Failed to send whisper to %s: %v", channel, err)
-		}
-	}()
-
 	m.LeaveChannel(channel)
 }
 
@@ -960,6 +915,33 @@ func (m *Manager) updateLiveConnections() {
 		isConnected := connectedChannels[ch]
 
 		if isLive && !isConnected {
+			// Check if channel has followers-only mode before joining
+			broadcasterID := channelIDs[ch]
+			if broadcasterID != "" && m.isChannelFollowersOnly(broadcasterID, clientID, oauthToken) && !m.isBotFollowing(ch) {
+				log.Printf("Channel %s is now live but has followers-only mode — leaving", ch)
+
+				whisperMsg := fmt.Sprintf("Hi! I had to leave your channel because it's in followers-only mode, "+
+					"which prevents me from chatting. If you disable followers-only mode, "+
+					"you can re-add me by typing !join in my channel (twitch.tv/%s). "+
+					"Thanks!", strings.ToLower(m.cfg.GetBotUsername()))
+
+				m.mu.RLock()
+				handler := m.eventHandler
+				m.mu.RUnlock()
+				if handler != nil {
+					handler("followers_only", map[string]string{"channel": ch, "message": whisperMsg})
+				}
+
+				go func(user, msg string) {
+					if err := m.sendWhisper(user, msg); err != nil {
+						log.Printf("Failed to send whisper to %s: %v", user, err)
+					}
+				}(ch, whisperMsg)
+
+				m.LeaveChannel(ch)
+				continue
+			}
+
 			log.Printf("Channel %s is now live, joining...", ch)
 			if err := m.JoinChannel(ch); err != nil {
 				log.Printf("Failed to join live channel %s: %v", ch, err)
@@ -1136,6 +1118,41 @@ func (m *Manager) getLiveChannelSetByID(channelIDs map[string]string, clientID, 
 	}
 
 	return
+}
+
+// isChannelFollowersOnly checks if a channel has followers-only mode enabled via the Twitch Helix API
+func (m *Manager) isChannelFollowersOnly(broadcasterID, clientID, oauthToken string) bool {
+	token := strings.TrimPrefix(oauthToken, "oauth:")
+
+	url := "https://api.twitch.tv/helix/chat/settings?broadcaster_id=" + broadcasterID
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	var apiResp struct {
+		Data []struct {
+			FollowerMode bool `json:"follower_mode"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return false
+	}
+
+	return len(apiResp.Data) > 0 && apiResp.Data[0].FollowerMode
 }
 
 // isChannelLive checks if a single channel is currently live via the Twitch API

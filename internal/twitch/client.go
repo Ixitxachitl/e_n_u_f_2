@@ -35,7 +35,6 @@ type Client struct {
 	onDisconnect    func(channel string)
 	onCommand       func(channel, username, command string)
 	onBanned        func(channel string)
-	onFollowersOnly func(channel string)
 	onGeneration    func(channel string, result markov.GenerationResult)
 	globalGenerator func(int) string // Function to generate from all brains
 }
@@ -61,13 +60,12 @@ func NewClient(channel string, cfg *config.Config, brain *markov.Brain) *Client 
 }
 
 // SetCallbacks sets the callback functions
-func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string), onFollowersOnly func(string), onGeneration func(string, markov.GenerationResult)) {
+func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string), onGeneration func(string, markov.GenerationResult)) {
 	c.onMessage = onMessage
 	c.onConnect = onConnect
 	c.onDisconnect = onDisconnect
 	c.onCommand = onCommand
 	c.onBanned = onBanned
-	c.onFollowersOnly = onFollowersOnly
 	c.onGeneration = onGeneration
 }
 
@@ -283,8 +281,8 @@ func (c *Client) handleMessage(raw string) {
 				parts := strings.Fields(msg.Content)
 				if len(parts) == 2 {
 					num, err := strconv.Atoi(parts[1])
-					if err != nil || num < 1 || num > 100 {
-						c.SendMessage(fmt.Sprintf("@%s Please use !response <1-100> to set how many messages before I respond in your channel.", msg.Username))
+					if err != nil || num < 1 || num > 1000 {
+						c.SendMessage(fmt.Sprintf("@%s Please use !response <1-1000> to set how many messages before I respond in your channel.", msg.Username))
 						return
 					}
 					c.cfg.SetChannelMessageInterval(userChannel, num)
@@ -292,7 +290,7 @@ func (c *Client) handleMessage(raw string) {
 				} else {
 					// Show current setting
 					current := c.cfg.GetChannelMessageInterval(userChannel)
-					c.SendMessage(fmt.Sprintf("@%s Your channel is set to %d messages. Use !response <1-100> to change.", msg.Username, current))
+					c.SendMessage(fmt.Sprintf("@%s Your channel is set to %d messages. Use !response <1-1000> to change.", msg.Username, current))
 				}
 				return
 			}
@@ -416,14 +414,10 @@ func (c *Client) handleMessage(raw string) {
 		}
 
 	case "ROOMSTATE":
-		// Check for followers-only mode
+		// Log followers-only mode changes for debugging
 		if followersOnly, ok := msg.Tags["followers-only"]; ok && followersOnly != "-1" {
-			// Skip if this is the bot's own channel
 			if !strings.EqualFold(c.channel, c.cfg.GetBotUsername()) {
 				log.Printf("[%s] Channel has followers-only mode enabled (value: %s)", c.channel, followersOnly)
-				if c.onFollowersOnly != nil {
-					c.onFollowersOnly(c.channel)
-				}
 			}
 		}
 

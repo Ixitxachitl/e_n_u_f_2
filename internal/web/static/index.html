@@ -155,10 +155,10 @@
                 <div class="form-group">
                     <label>Default messages before auto-response:</label>
                     <div class="slider-group">
-                        <input type="range" id="interval-slider" min="5" max="100" value="35">
+                        <input type="range" id="interval-slider" min="5" max="1000" value="35">
                         <span id="interval-value">35</span>
                     </div>
-                    <p class="hint">This is the default interval for new channels. Each channel can have its own interval set via the slider in the Channels tab, or streamers can use <code>!response &lt;1-100&gt;</code> in chat.</p>
+                    <p class="hint">This is the default interval for new channels. Each channel can have its own interval set via the slider in the Channels tab, or streamers can use <code>!response &lt;1-1000&gt;</code> in chat.</p>
                 </div>
                 <div class="form-group">
                     <label>Default brain mode for new channels:</label>
@@ -219,7 +219,7 @@
                         <input type="checkbox" id="allow-response-cmd" checked>
                         <span>Allow !response command</span>
                     </label>
-                    <p class="hint">When enabled, streamers can use <code>!response &lt;1-100&gt;</code> to change their channel's message interval.</p>
+                    <p class="hint">When enabled, streamers can use <code>!response &lt;1-1000&gt;</code> to change their channel's message interval.</p>
                 </div>
                 <div class="form-group">
                     <label class="toggle-label">

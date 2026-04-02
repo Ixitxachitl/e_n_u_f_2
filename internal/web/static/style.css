@@ -767,6 +767,24 @@ input[type="password"]::placeholder {
     text-align: right;
 }
 
+.channel-interval .interval-input {
+    width: 52px;
+    padding: 2px 4px;
+    font-size: 0.85rem;
+    text-align: center;
+    background: var(--card-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    -moz-appearance: textfield;
+}
+
+.channel-interval .interval-input::-webkit-outer-spin-button,
+.channel-interval .interval-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
 .channel-interval input[type="range"] {
     width: 100px;
     height: 6px;

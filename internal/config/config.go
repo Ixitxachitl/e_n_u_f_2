@@ -251,14 +251,14 @@ func (c *Config) GetChannelMessageInterval(channel string) int {
 	return interval
 }
 
-// SetChannelMessageInterval sets the per-channel message interval (1-100)
+// SetChannelMessageInterval sets the per-channel message interval (1-1000)
 func (c *Config) SetChannelMessageInterval(channel string, interval int) error {
 	// Clamp to valid range
 	if interval < 1 {
 		interval = 1
 	}
-	if interval > 100 {
-		interval = 100
+	if interval > 1000 {
+		interval = 1000
 	}
 	db := database.GetDB()
 	_, err := db.Exec("UPDATE channels SET message_interval = ? WHERE name = ?", interval, strings.ToLower(channel))
@@ -689,7 +689,7 @@ func (c *Config) VerifyAdminPassword(password string) bool {
 // CreateSession creates a new session and returns the token
 func (c *Config) CreateSession() (string, error) {
 	token := generateToken()
-	expiresAt := time.Now().Add(24 * time.Hour) // 24 hour sessions
+	expiresAt := time.Now().Add(30 * 24 * time.Hour) // 30 day sessions
 
 	db := database.GetDB()
 	_, err := db.Exec(`

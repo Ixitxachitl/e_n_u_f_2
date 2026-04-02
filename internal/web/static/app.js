@@ -1,27 +1,43 @@
 // API Helper
+function handleAuthExpired(res) {
+    if (res.status === 401 && !res.url.includes('/api/auth/')) {
+        isAuthenticated = false;
+        const overlay = document.getElementById('auth-overlay');
+        const setupForm = document.getElementById('setup-form');
+        const loginForm = document.getElementById('login-form');
+        const authLoading = document.getElementById('auth-loading');
+        if (overlay) overlay.style.display = 'flex';
+        if (setupForm) setupForm.style.display = 'none';
+        if (loginForm) loginForm.style.display = 'block';
+        if (authLoading) authLoading.style.display = 'none';
+        setupAuthListeners();
+    }
+    return res;
+}
+
 const api = {
     async get(url) {
-        const res = await fetch(url);
+        const res = handleAuthExpired(await fetch(url));
         return res.json();
     },
     async post(url, data) {
-        const res = await fetch(url, {
+        const res = handleAuthExpired(await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
-        });
+        }));
         return res.json();
     },
     async put(url, data) {
-        const res = await fetch(url, {
+        const res = handleAuthExpired(await fetch(url, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
-        });
+        }));
         return res.json();
     },
     async delete(url) {
-        const res = await fetch(url, { method: 'DELETE' });
+        const res = handleAuthExpired(await fetch(url, { method: 'DELETE' }));
         return res.json();
     }
 };
@@ -930,10 +946,13 @@ function renderChannels(channels) {
             <div class="channel-controls">
                 <div class="channel-controls-row">
                     <div class="channel-interval">
-                        <span class="interval-value">${interval}</span>
-                        <input type="range" min="1" max="100" value="${interval}" 
+                        <input type="number" class="interval-input" min="1" max="1000" value="${interval}"
+                            onchange="updateChannelInterval('${ch.channel}', this.value)"
+                            oninput="this.nextElementSibling.value = this.value"
+                            onclick="event.stopPropagation()">
+                        <input type="range" min="1" max="1000" value="${interval}" 
                             onchange="updateChannelInterval('${ch.channel}', this.value)" 
-                            oninput="this.previousElementSibling.textContent = this.value"
+                            oninput="this.previousElementSibling.value = this.value"
                             onclick="event.stopPropagation()">
                     </div>
                     <div class="channel-brain-toggle">
@@ -1002,8 +1021,8 @@ window.goToPage = function(type, page) {
 
 async function updateChannelInterval(channel, interval) {
     const num = parseInt(interval);
-    if (isNaN(num) || num < 1 || num > 100) {
-        showToast('Interval must be between 1 and 100', 'error');
+    if (isNaN(num) || num < 1 || num > 1000) {
+        showToast('Interval must be between 1 and 1000', 'error');
         return;
     }
     try {

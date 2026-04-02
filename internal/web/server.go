@@ -698,8 +698,8 @@ func (s *Server) handleChannelAction(w http.ResponseWriter, r *http.Request) {
 				httpError(w, "Invalid request", http.StatusBadRequest)
 				return
 			}
-			if req.Interval < 1 || req.Interval > 100 {
-				httpError(w, "Interval must be between 1 and 100", http.StatusBadRequest)
+			if req.Interval < 1 || req.Interval > 1000 {
+				httpError(w, "Interval must be between 1 and 1000", http.StatusBadRequest)
 				return
 			}
 			s.cfg.SetChannelMessageInterval(channel, req.Interval)
@@ -1489,7 +1489,7 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   86400, // 24 hours
+		MaxAge:   2592000, // 30 days
 	})
 
 	jsonResponse(w, map[string]string{"status": "ok"})
@@ -1529,7 +1529,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   86400, // 24 hours
+		MaxAge:   2592000, // 30 days
 	})
 
 	jsonResponse(w, map[string]string{"status": "ok"})
@@ -1608,7 +1608,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		HttpOnly: true,
 		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   86400,
+		MaxAge:   2592000, // 30 days
 	})
 
 	jsonResponse(w, map[string]string{"status": "ok"})
