@@ -9,12 +9,14 @@ A multi-channel Twitch chat bot written in Go with Markov chain text generation,
 - **Markov Chain Generation**: Learn from chat and generate context-aware responses
 - **Per-Channel SQLite Databases**: Each channel has its own brain database in `~/.twitchbot/brains/`
 - **Live-Only Mode**: Bot automatically joins when channels go live, leaves when offline
-- **Per-Channel Message Intervals**: Each channel can have its own response frequency (1-100 messages)
+- **Per-Channel Message Intervals**: Each channel can have its own response frequency (1-1000 messages)
+- **Inactivity Timer**: Automatically generate a message after chat is silent for a configurable duration (1-60 minutes)
+- **Followers-Only Detection**: Bot auto-leaves channels in followers-only mode and whispers the streamer
 
 ### Authentication & Security
 - **Admin Password Protection**: Web UI requires password authentication for remote access
 - **Localhost Exception**: No password required when accessing from the same machine
-- **Session Management**: Secure cookie-based sessions with 24-hour expiry
+- **Session Management**: Secure cookie-based sessions with 30-day expiry
 - **Twitch OAuth Integration**: Secure login via Twitch OAuth flow
 - **HTTPS Support**: Self-signed certificate generation for secure OAuth callbacks
 - **Word & User Blacklists**: Filter unwanted words and ignore specific users
@@ -166,9 +168,12 @@ To expose the quotes page publicly with a valid SSL certificate:
 | `!join` | Bot's channel | Add bot to your channel |
 | `!leave` | Bot's channel | Remove bot from your channel |
 | `!response` | Bot's channel | Show current message interval for your channel |
-| `!response <1-100>` | Bot's channel | Set message interval for your channel |
+| `!response <1-1000>` | Bot's channel | Set message interval for your channel |
 | `!global` | Bot's channel | Use all channel brains for generating responses |
 | `!local` | Bot's channel | Use only your channel's brain for generating (default) |
+| `!timer` | Bot's channel | Show inactivity timer status for your channel |
+| `!timer on/off` | Bot's channel | Enable or disable the inactivity timer |
+| `!timer <1-60>` | Bot's channel | Set inactivity timer duration in minutes |
 | `!ignoreme` | Any channel | Opt-out of bot learning from your messages |
 | `!listentome` | Any channel | Opt back in to bot learning |
 
@@ -211,6 +216,8 @@ To expose the quotes page publicly with a valid SSL certificate:
 | DELETE | `/api/channels/{name}` | Leave/remove a channel |
 | POST | `/api/channels/{name}/reconnect` | Reconnect to a channel |
 | PUT | `/api/channels/{name}/interval` | Set channel message interval |
+| PUT | `/api/channels/{name}/global` | Toggle global/local brain mode |
+| PUT | `/api/channels/{name}/timer` | Set inactivity timer enabled/minutes |
 | GET | `/api/live` | Get currently live channels |
 | GET | `/api/brains` | List brain data per channel |
 | GET | `/api/brains/{channel}/stats` | Brain statistics |
