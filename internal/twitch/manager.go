@@ -32,6 +32,7 @@ type Manager struct {
 	msgCounts       map[string]int64
 	lastActivity    map[string]time.Time // last message time per channel for inactivity timer
 	timerFired      map[string]bool      // whether timer already fired since last activity
+	followersOnly   map[string]bool      // channels flagged as followers-only (skip until offline)
 	mu              sync.RWMutex
 	running         bool
 	eventHandler    func(event string, data interface{})
@@ -42,13 +43,14 @@ type Manager struct {
 // NewManager creates a new Twitch connection manager
 func NewManager(cfg *config.Config) *Manager {
 	return &Manager{
-		cfg:          cfg,
-		brainMgr:     markov.NewManager(cfg),
-		clients:      make(map[string]*Client),
-		msgCounts:    make(map[string]int64),
-		lastActivity: make(map[string]time.Time),
-		timerFired:   make(map[string]bool),
-		stopChan:     make(chan struct{}),
+		cfg:           cfg,
+		brainMgr:      markov.NewManager(cfg),
+		clients:       make(map[string]*Client),
+		msgCounts:     make(map[string]int64),
+		lastActivity:  make(map[string]time.Time),
+		timerFired:    make(map[string]bool),
+		followersOnly: make(map[string]bool),
+		stopChan:      make(chan struct{}),
 	}
 }
 
@@ -126,6 +128,7 @@ func (m *Manager) JoinChannel(channel string) error {
 		m.onDisconnect,
 		m.onCommand,
 		m.onBanned,
+		m.onFollowersOnly,
 		m.onGeneration,
 	)
 
@@ -420,6 +423,53 @@ func (m *Manager) onGeneration(channel string, result markov.GenerationResult) {
 func (m *Manager) onBanned(channel string) {
 	log.Printf("Bot was banned from channel: %s - leaving channel", channel)
 	m.LeaveChannel(channel)
+}
+
+func (m *Manager) onFollowersOnly(channel string) {
+	channel = strings.ToLower(channel)
+
+	// Check if bot is following the channel (allowed to chat even in followers-only)
+	if m.isBotFollowing(channel) {
+		log.Printf("[%s] Channel has followers-only mode but bot is following — staying", channel)
+		return
+	}
+
+	// Check if already flagged to avoid duplicate whispers
+	m.mu.RLock()
+	alreadyFlagged := m.followersOnly[channel]
+	m.mu.RUnlock()
+	if alreadyFlagged {
+		log.Printf("[%s] Already flagged as followers-only — disconnecting without re-whispering", channel)
+		m.leaveChannelQuietly(channel)
+		return
+	}
+
+	log.Printf("[%s] Followers-only mode detected via IRC — disconnecting (will retry next live check)", channel)
+
+	// Flag the channel so we don't whisper again until they go offline
+	m.mu.Lock()
+	m.followersOnly[channel] = true
+	m.mu.Unlock()
+
+	whisperMsg := fmt.Sprintf("Hi! I disconnected from your channel because it's in followers-only mode, " +
+		"which prevents me from chatting. I'll automatically reconnect next time you go live " +
+		"if followers-only mode is disabled. Thanks!",
+	)
+
+	m.mu.RLock()
+	handler := m.eventHandler
+	m.mu.RUnlock()
+	if handler != nil {
+		handler("followers_only", map[string]string{"channel": channel, "message": whisperMsg})
+	}
+
+	go func(user, msg string) {
+		if err := m.sendWhisper(user, msg); err != nil {
+			log.Printf("Failed to send whisper to %s: %v", user, err)
+		}
+	}(channel, whisperMsg)
+
+	m.leaveChannelQuietly(channel)
 }
 
 // sendWhisper sends a whisper (DM) to a user via the Twitch Helix API
@@ -863,6 +913,13 @@ func (m *Manager) GetChannelTimerInfo(channel string) (enabled bool, minutes int
 	return
 }
 
+// IsChannelFollowersOnly returns whether a channel is currently flagged as followers-only
+func (m *Manager) IsChannelFollowersOnly(channel string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.followersOnly[strings.ToLower(channel)]
+}
+
 // updateLiveConnections joins live channels and leaves offline channels
 func (m *Manager) updateLiveConnections() {
 	clientID := m.cfg.GetClientID()
@@ -915,15 +972,28 @@ func (m *Manager) updateLiveConnections() {
 		isConnected := connectedChannels[ch]
 
 		if isLive && !isConnected {
+			// Skip channels already flagged as followers-only
+			m.mu.RLock()
+			skipFollowers := m.followersOnly[ch]
+			m.mu.RUnlock()
+			if skipFollowers {
+				continue
+			}
+
 			// Check if channel has followers-only mode before joining
 			broadcasterID := channelIDs[ch]
 			if broadcasterID != "" && m.isChannelFollowersOnly(broadcasterID, clientID, oauthToken) && !m.isBotFollowing(ch) {
-				log.Printf("Channel %s is now live but has followers-only mode — leaving", ch)
+				log.Printf("Channel %s is now live but has followers-only mode — skipping (will retry next check)", ch)
 
-				whisperMsg := fmt.Sprintf("Hi! I had to leave your channel because it's in followers-only mode, "+
-					"which prevents me from chatting. If you disable followers-only mode, "+
-					"you can re-add me by typing !join in my channel (twitch.tv/%s). "+
-					"Thanks!", strings.ToLower(m.cfg.GetBotUsername()))
+				whisperMsg := fmt.Sprintf("Hi! I couldn't join your channel because it's in followers-only mode, " +
+					"which prevents me from chatting. I'll automatically join next time you go live " +
+					"if followers-only mode is disabled. Thanks!",
+				)
+
+				// Flag channel so we don't whisper again until they go offline
+				m.mu.Lock()
+				m.followersOnly[ch] = true
+				m.mu.Unlock()
 
 				m.mu.RLock()
 				handler := m.eventHandler
@@ -938,7 +1008,6 @@ func (m *Manager) updateLiveConnections() {
 					}
 				}(ch, whisperMsg)
 
-				m.LeaveChannel(ch)
 				continue
 			}
 
@@ -951,6 +1020,13 @@ func (m *Manager) updateLiveConnections() {
 			log.Printf("Channel %s is now offline, leaving...", ch)
 			m.leaveChannelQuietly(ch)
 			time.Sleep(500 * time.Millisecond) // Rate limit
+		}
+
+		// Clear followers-only flag when channel goes offline so we re-check next time
+		if !isLive {
+			m.mu.Lock()
+			delete(m.followersOnly, ch)
+			m.mu.Unlock()
 		}
 	}
 }

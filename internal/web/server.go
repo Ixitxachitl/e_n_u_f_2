@@ -635,6 +635,7 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 				"use_global":        s.cfg.GetChannelUseGlobalBrain(ch.Channel),
 				"timer_enabled":     s.cfg.GetChannelTimerEnabled(ch.Channel),
 				"timer_minutes":     s.cfg.GetChannelTimerMinutes(ch.Channel),
+				"followers_only":    s.manager.IsChannelFollowersOnly(ch.Channel),
 			}
 		}
 		jsonResponse(w, result)
@@ -825,6 +826,7 @@ func (s *Server) handleLiveChannels(w http.ResponseWriter, r *http.Request) {
 				"message_interval":  interval,
 				"last_message":      lastMsg,
 				"profile_image_url": stream.ProfileImageURL,
+				"followers_only":    s.manager.IsChannelFollowersOnly(ch.Channel),
 			})
 		}
 	}

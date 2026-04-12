@@ -621,7 +621,7 @@ function handleWebSocketEvent(data) {
         loadStatus();
     } else if (data.event === 'followers_only') {
         const d = data.data;
-        addSystemEntry(d.channel, `🚫 Left channel — followers-only mode. Whispered: "${d.message}"`);
+        addSystemEntry(d.channel, `🚫 Disconnected — followers-only mode. Whispered: "${d.message}"`);
         loadChannels();
     } else if (data.event === 'new_quote') {
         // Auto-refresh quotes list if on first page
@@ -1124,29 +1124,34 @@ function renderLiveChannels(liveChannels) {
         const interval = ch.message_interval || 1;
         const percentage = Math.round(((interval - countdown) / interval) * 100);
         const lastMsg = ch.last_message || '';
+        const isFollowersOnly = ch.followers_only || false;
         const profileImg = ch.profile_image_url 
             ? `<img src="${ch.profile_image_url}" class="channel-avatar-large" alt="${ch.channel}">` 
             : `<span class="channel-avatar-placeholder-large"></span>`;
         
+        const followersOnlyBadge = isFollowersOnly 
+            ? `<span class="followers-only-badge" title="Followers-only mode — bot disconnected">🚫 Followers Only</span>` 
+            : '';
+        
         return `
-        <div class="list-item live-channel-item" onclick="window.open('https://twitch.tv/${ch.channel}', '_blank')">
+        <div class="list-item live-channel-item${isFollowersOnly ? ' followers-only' : ''}" onclick="window.open('https://twitch.tv/${ch.channel}', '_blank')">
             <div class="countdown-display">
-                <div class="countdown-number">${countdown}</div>
-                <div class="countdown-label">msgs</div>
+                <div class="countdown-number">${isFollowersOnly ? '🚫' : countdown}</div>
+                <div class="countdown-label">${isFollowersOnly ? '' : 'msgs'}</div>
             </div>
             ${profileImg}
             <div class="info">
                 <div class="name">
-                    ${ch.channel}
+                    ${ch.channel} ${followersOnlyBadge}
                 </div>
                 <div class="stats">
                     ${ch.game || 'Unknown Game'} • ${ch.viewers.toLocaleString()} viewers
                 </div>
                 <div class="stream-title">${escapeHtml(ch.title || '')}</div>
-                <div class="countdown-bar">
+                ${isFollowersOnly ? '' : `<div class="countdown-bar">
                     <div class="countdown-progress" style="width: ${percentage}%"></div>
-                </div>
-                ${lastMsg ? `<div class="last-bot-message">🤖 ${escapeHtml(lastMsg)}</div>` : ''}
+                </div>`}
+                ${lastMsg && !isFollowersOnly ? `<div class="last-bot-message">🤖 ${escapeHtml(lastMsg)}</div>` : ''}
             </div>
         </div>
     `}).join('');

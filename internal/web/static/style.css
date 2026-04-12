@@ -647,6 +647,21 @@ input[type="password"]::placeholder {
     background-color: var(--bg-tertiary);
 }
 
+.live-channel-item.followers-only {
+    opacity: 0.6;
+}
+
+.live-channel-item.followers-only .countdown-display {
+    background: linear-gradient(135deg, var(--danger), #b71c1c);
+}
+
+.followers-only-badge {
+    font-size: 0.7rem;
+    color: var(--danger);
+    font-weight: 600;
+    margin-left: 6px;
+}
+
 .countdown-display {
     display: flex;
     flex-direction: column;
