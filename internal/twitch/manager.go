@@ -1046,13 +1046,34 @@ func (m *Manager) ensureChannelIDs(channels []string, clientID, oauthToken strin
 		}
 	}
 
-	// Look up missing IDs
+	// Look up missing IDs by username
 	if len(needsLookup) > 0 {
 		newIDs := m.lookupUserIDs(needsLookup, clientID, oauthToken)
 		for ch, userID := range newIDs {
 			result[ch] = userID
 			m.cfg.SetUserIDMapping(userID, ch)
 			log.Printf("Stored user ID for %s: %s", ch, userID)
+		}
+	}
+
+	// Reverse-check all stored IDs to detect username changes (even for offline channels)
+	if len(result) > 0 {
+		idToStoredName := make(map[string]string)
+		var userIDs []string
+		for name, id := range result {
+			idToStoredName[id] = name
+			userIDs = append(userIDs, id)
+		}
+		currentNames := m.lookupUsernamesByID(userIDs, clientID, oauthToken)
+		for id, currentName := range currentNames {
+			storedName := idToStoredName[id]
+			if storedName != "" && storedName != currentName {
+				log.Printf("Username change detected in ensureChannelIDs: %s -> %s (ID: %s)", storedName, currentName, id)
+				m.handleUsernameChange(storedName, currentName, id)
+				// Update result map
+				delete(result, storedName)
+				result[currentName] = id
+			}
 		}
 	}
 
@@ -1109,6 +1130,66 @@ func (m *Manager) lookupUserIDs(usernames []string, clientID, oauthToken string)
 
 	for _, user := range apiResp.Data {
 		result[strings.ToLower(user.Login)] = user.ID
+	}
+
+	return result
+}
+
+// lookupUsernamesByID queries Twitch API by user IDs and returns a map of userID -> current username
+func (m *Manager) lookupUsernamesByID(userIDs []string, clientID, oauthToken string) map[string]string {
+	result := make(map[string]string)
+	if len(userIDs) == 0 {
+		return result
+	}
+
+	// Build query params (max 100 per request)
+	params := "?"
+	for i, id := range userIDs {
+		if i > 0 {
+			params += "&"
+		}
+		params += "id=" + id
+	}
+
+	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users"+params, nil)
+	if err != nil {
+		return result
+	}
+
+	token := strings.TrimPrefix(oauthToken, "oauth:")
+	req.Header.Set("Client-ID", clientID)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error looking up usernames by ID: %v", err)
+		return result
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return result
+	}
+
+	var apiResp struct {
+		Data []struct {
+			ID          string `json:"id"`
+			Login       string `json:"login"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return result
+	}
+
+	for _, user := range apiResp.Data {
+		result[user.ID] = strings.ToLower(user.Login)
+		// Also update display name while we're at it
+		if user.DisplayName != "" {
+			m.cfg.SetChannelDisplayName(strings.ToLower(user.Login), user.DisplayName)
+		}
 	}
 
 	return result
