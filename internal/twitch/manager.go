@@ -972,11 +972,25 @@ func (m *Manager) updateLiveConnections() {
 		isConnected := connectedChannels[ch]
 
 		if isLive && !isConnected {
-			// Skip channels already flagged as followers-only
+			// Re-check channels previously flagged as followers-only
 			m.mu.RLock()
-			skipFollowers := m.followersOnly[ch]
+			wasFlagged := m.followersOnly[ch]
 			m.mu.RUnlock()
-			if skipFollowers {
+			if wasFlagged {
+				broadcasterID := channelIDs[ch]
+				if broadcasterID != "" && m.isChannelFollowersOnly(broadcasterID, clientID, oauthToken) && !m.isBotFollowing(ch) {
+					// Still followers-only, keep skipping
+					continue
+				}
+				// Followers-only was turned off — clear flag and join
+				log.Printf("Channel %s is no longer in followers-only mode, joining...", ch)
+				m.mu.Lock()
+				delete(m.followersOnly, ch)
+				m.mu.Unlock()
+				if err := m.JoinChannel(ch); err != nil {
+					log.Printf("Failed to join channel %s: %v", ch, err)
+				}
+				time.Sleep(500 * time.Millisecond)
 				continue
 			}
 
