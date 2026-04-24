@@ -26,18 +26,18 @@ type ChannelStatus struct {
 
 // Manager manages multiple Twitch channel connections
 type Manager struct {
-	cfg             *config.Config
-	brainMgr        *markov.Manager
-	clients         map[string]*Client
-	msgCounts       map[string]int64
-	lastActivity    map[string]time.Time // last message time per channel for inactivity timer
-	timerFired      map[string]bool      // whether timer already fired since last activity
-	followersOnly   map[string]bool      // channels flagged as followers-only (skip until offline)
-	mu              sync.RWMutex
-	running         bool
-	eventHandler    func(event string, data interface{})
-	stopChan        chan struct{}
-	botReconnecting bool
+	cfg           *config.Config
+	brainMgr      *markov.Manager
+	clients       map[string]*Client
+	msgCounts     map[string]int64
+	lastActivity  map[string]time.Time // last message time per channel for inactivity timer
+	timerFired    map[string]bool      // whether timer already fired since last activity
+	followersOnly map[string]bool      // channels flagged as followers-only (skip until offline)
+	mu            sync.RWMutex
+	running       bool
+	eventHandler  func(event string, data interface{})
+	stopChan      chan struct{}
+	reconnecting  map[string]bool
 }
 
 // NewManager creates a new Twitch connection manager
@@ -50,6 +50,7 @@ func NewManager(cfg *config.Config) *Manager {
 		lastActivity:  make(map[string]time.Time),
 		timerFired:    make(map[string]bool),
 		followersOnly: make(map[string]bool),
+		reconnecting:  make(map[string]bool),
 		stopChan:      make(chan struct{}),
 	}
 }
@@ -320,35 +321,34 @@ func (m *Manager) onConnect(channel string) {
 }
 
 func (m *Manager) onDisconnect(channel string) {
+	channel = strings.ToLower(channel)
 	m.mu.Lock()
 	handler := m.eventHandler
 	running := m.running
-	alreadyReconnecting := m.botReconnecting
+	alreadyReconnecting := m.reconnecting[channel]
+	if running && !alreadyReconnecting {
+		m.reconnecting[channel] = true
+	}
 	m.mu.Unlock()
 
 	if handler != nil {
 		handler("disconnect", map[string]string{"channel": channel})
 	}
 
-	// Auto-reconnect the bot's own channel indefinitely (only one goroutine at a time)
-	botUsername := strings.ToLower(m.cfg.GetBotUsername())
-	if running && strings.ToLower(channel) == botUsername && !alreadyReconnecting {
-		m.mu.Lock()
-		m.botReconnecting = true
-		m.mu.Unlock()
-		go m.reconnectBotChannel()
+	// Auto-reconnect all channels indefinitely (only one goroutine per channel at a time)
+	if running && !alreadyReconnecting {
+		go m.reconnectChannel(channel)
 	}
 }
 
-// reconnectBotChannel attempts to reconnect the bot's own channel indefinitely with exponential backoff
-func (m *Manager) reconnectBotChannel() {
+// reconnectChannel attempts to reconnect a channel indefinitely with exponential backoff
+func (m *Manager) reconnectChannel(channel string) {
 	defer func() {
 		m.mu.Lock()
-		m.botReconnecting = false
+		delete(m.reconnecting, channel)
 		m.mu.Unlock()
 	}()
 
-	botUsername := strings.ToLower(m.cfg.GetBotUsername())
 	baseDelay := 5 * time.Second
 	maxDelay := 5 * time.Minute
 	attempt := 0
@@ -366,7 +366,7 @@ func (m *Manager) reconnectBotChannel() {
 		if delay > maxDelay {
 			delay = maxDelay
 		}
-		log.Printf("Bot channel disconnected, reconnecting in %v (attempt %d)...", delay, attempt+1)
+		log.Printf("[%s] Disconnected, reconnecting in %v (attempt %d)...", channel, delay, attempt+1)
 
 		select {
 		case <-m.stopChan:
@@ -376,7 +376,7 @@ func (m *Manager) reconnectBotChannel() {
 
 		// Clean up old client before reconnecting
 		m.mu.Lock()
-		if oldClient, exists := m.clients[botUsername]; exists {
+		if oldClient, exists := m.clients[channel]; exists {
 			// Set running=false directly to prevent Disconnect from triggering another onDisconnect
 			oldClient.mu.Lock()
 			oldClient.running = false
@@ -385,17 +385,17 @@ func (m *Manager) reconnectBotChannel() {
 				oldClient.conn = nil
 			}
 			oldClient.mu.Unlock()
-			delete(m.clients, botUsername)
-			delete(m.msgCounts, botUsername)
+			delete(m.clients, channel)
+			delete(m.msgCounts, channel)
 		}
 		m.mu.Unlock()
 
-		err := m.JoinChannel(botUsername)
+		err := m.JoinChannel(channel)
 		if err == nil {
-			log.Printf("Successfully reconnected to bot channel: %s", botUsername)
+			log.Printf("[%s] Successfully reconnected", channel)
 			return
 		}
-		log.Printf("Failed to reconnect bot channel: %v", err)
+		log.Printf("[%s] Failed to reconnect: %v", channel, err)
 		attempt++
 	}
 }
