@@ -326,17 +326,26 @@ func (m *Manager) onDisconnect(channel string) {
 	handler := m.eventHandler
 	running := m.running
 	alreadyReconnecting := m.reconnecting[channel]
-	if running && !alreadyReconnecting {
+	// Only reconnect if the client is still registered — intentional disconnects
+	// (leaveChannelQuietly, LeaveChannel) delete the client from m.clients before
+	// closing the connection, so m.clients[channel] will be nil in those cases.
+	_, stillRegistered := m.clients[channel]
+	if running && !alreadyReconnecting && stillRegistered {
 		m.reconnecting[channel] = true
 	}
 	m.mu.Unlock()
+
+	if handler != nil && !stillRegistered {
+		// leaveChannelQuietly already broadcasts the disconnect event; skip duplicate
+		return
+	}
 
 	if handler != nil {
 		handler("disconnect", map[string]string{"channel": channel})
 	}
 
-	// Auto-reconnect all channels indefinitely (only one goroutine per channel at a time)
-	if running && !alreadyReconnecting {
+	// Auto-reconnect only unexpected disconnects (client still registered in map)
+	if running && !alreadyReconnecting && stillRegistered {
 		go m.reconnectChannel(channel)
 	}
 }
