@@ -17,9 +17,11 @@ import (
 
 // Manager manages multiple channel brains, each with its own database
 type Manager struct {
-	brains map[string]*Brain
-	cfg    *config.Config
-	mu     sync.RWMutex
+	brains      map[string]*Brain
+	cfg         *config.Config
+	mu          sync.RWMutex
+	listCache   []BrainStats
+	listCacheAt time.Time
 }
 
 // NewManager creates a new brain manager
@@ -113,6 +115,16 @@ func (m *Manager) GetLastMessage(channel string) string {
 // For brains already loaded in memory, it uses the in-memory instance.
 // For brains only on disk, it queries the DB directly without permanently loading them.
 func (m *Manager) ListBrains() []BrainStats {
+	// Return cached result if still fresh (30s TTL)
+	m.mu.RLock()
+	if m.listCache != nil && time.Since(m.listCacheAt) < 30*time.Second {
+		cached := make([]BrainStats, len(m.listCache))
+		copy(cached, m.listCache)
+		m.mu.RUnlock()
+		return cached
+	}
+	m.mu.RUnlock()
+
 	listStart := time.Now()
 	brainsDir := filepath.Join(database.GetDataDir(), "brains")
 
@@ -157,6 +169,12 @@ func (m *Manager) ListBrains() []BrainStats {
 	}
 
 	log.Printf("[brain] ListBrains completed for %d brain(s) in %v", len(stats), time.Since(listStart))
+
+	m.mu.Lock()
+	m.listCache = stats
+	m.listCacheAt = time.Now()
+	m.mu.Unlock()
+
 	return stats
 }
 
@@ -192,6 +210,13 @@ func (m *Manager) getStatsFromFile(channel, brainsDir string) BrainStats {
 	return stats
 }
 
+// invalidateListCache busts the ListBrains cache so the next call re-scans.
+func (m *Manager) invalidateListCache() {
+	m.mu.Lock()
+	m.listCache = nil
+	m.mu.Unlock()
+}
+
 // EraseBrain clears all brain data for a channel but keeps the database file
 func (m *Manager) EraseBrain(channel string) error {
 	channel = strings.ToLower(channel)
@@ -199,7 +224,9 @@ func (m *Manager) EraseBrain(channel string) error {
 	if brain == nil {
 		return nil
 	}
-	return brain.Erase()
+	err := brain.Erase()
+	m.invalidateListCache()
+	return err
 }
 
 // DeleteBrain deletes brain data for a channel (removes the database file)
@@ -239,6 +266,7 @@ func (m *Manager) DeleteBrain(channel string) error {
 	}
 
 	log.Printf("Successfully deleted brain files for %s", channel)
+	m.invalidateListCache()
 	return nil
 }
 
@@ -248,7 +276,9 @@ func (m *Manager) CleanBrain(channel string) CleanResult {
 	if brain == nil {
 		return CleanResult{Channel: channel, Words: []CleanWordResult{}}
 	}
-	return brain.Clean()
+	result := brain.Clean()
+	m.invalidateListCache()
+	return result
 }
 
 // CleanAllBrains cleans all brains of blacklisted words
@@ -264,6 +294,7 @@ func (m *Manager) CleanAllBrains() []CleanResult {
 			}
 		}
 	}
+	m.invalidateListCache()
 	return results
 }
 
