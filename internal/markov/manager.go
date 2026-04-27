@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -112,6 +113,7 @@ func (m *Manager) GetLastMessage(channel string) string {
 // For brains already loaded in memory, it uses the in-memory instance.
 // For brains only on disk, it queries the DB directly without permanently loading them.
 func (m *Manager) ListBrains() []BrainStats {
+	listStart := time.Now()
 	brainsDir := filepath.Join(database.GetDataDir(), "brains")
 
 	// Ensure directory exists
@@ -141,15 +143,20 @@ func (m *Manager) ListBrains() []BrainStats {
 		brain, loaded := m.brains[channel]
 		m.mu.RUnlock()
 
+		brainStart := time.Now()
 		if loaded && brain != nil {
-			stats = append(stats, brain.GetStats())
+			s := brain.GetStats()
+			log.Printf("[brain] stats for loaded brain %q: %d entries, took %v", channel, s.TotalEntries, time.Since(brainStart))
+			stats = append(stats, s)
 		} else {
 			// Query stats from the DB file without permanently loading the brain
 			s := m.getStatsFromFile(channel, brainsDir)
+			log.Printf("[brain] stats for unloaded brain %q: %d entries, took %v", channel, s.TotalEntries, time.Since(brainStart))
 			stats = append(stats, s)
 		}
 	}
 
+	log.Printf("[brain] ListBrains completed for %d brain(s) in %v", len(stats), time.Since(listStart))
 	return stats
 }
 
@@ -162,8 +169,9 @@ func (m *Manager) getStatsFromFile(channel, brainsDir string) BrainStats {
 		stats.DbSize = info.Size()
 	}
 
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&mode=ro")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=cache_size(-8192)&_pragma=temp_store(memory)&mode=ro")
 	if err != nil {
+		log.Printf("[brain] getStatsFromFile: failed to open %q: %v", channel, err)
 		return stats
 	}
 	defer db.Close()
@@ -171,8 +179,14 @@ func (m *Manager) getStatsFromFile(channel, brainsDir string) BrainStats {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(0)
 
-	db.QueryRow(`SELECT COUNT(DISTINCT word1 || '|' || word2) FROM transitions`).Scan(&stats.UniquePairs)
+	t0 := time.Now()
+	db.QueryRow(`SELECT COUNT(*) FROM (SELECT DISTINCT word1, word2 FROM transitions)`).Scan(&stats.UniquePairs)
+	log.Printf("[brain] getStatsFromFile %q: UniquePairs query took %v", channel, time.Since(t0))
+
+	t0 = time.Now()
 	db.QueryRow(`SELECT COUNT(*) FROM transitions`).Scan(&stats.TotalEntries)
+	log.Printf("[brain] getStatsFromFile %q: TotalEntries query took %v", channel, time.Since(t0))
+
 	stats.MessageCount, _, _ = m.cfg.GetChannelStats(channel)
 
 	return stats

@@ -18,12 +18,14 @@ import (
 
 // Brain represents a Markov chain brain for a single channel with its own database
 type Brain struct {
-	Channel    string
-	cfg        *config.Config
-	db         *sql.DB
-	mu         sync.RWMutex
-	msgCounter int
-	rng        *rand.Rand
+	Channel      string
+	cfg          *config.Config
+	db           *sql.DB
+	mu           sync.RWMutex
+	msgCounter   int
+	rng          *rand.Rand
+	statsCache   *BrainStats
+	statsCacheAt time.Time
 }
 
 // BrainStats holds statistics about a brain
@@ -74,7 +76,7 @@ func (b *Brain) initDB() error {
 
 	dbPath := filepath.Join(brainsDir, b.Channel+".db")
 	var err error
-	b.db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	b.db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=cache_size(-8192)&_pragma=temp_store(memory)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return err
 	}
@@ -324,12 +326,19 @@ func (b *Brain) Generate(maxWords int) string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	// Get a random starting pair
+	// Get a random starting pair using rowid trick — O(1) vs O(n log n) for ORDER BY RANDOM()
 	var word1, word2 string
 	err := b.db.QueryRow(`
-		SELECT word1, word2 FROM transitions 
-		ORDER BY RANDOM() LIMIT 1
+		SELECT word1, word2 FROM transitions
+		WHERE rowid >= (abs(random()) % (SELECT max(rowid) FROM transitions) + 1)
+		LIMIT 1
 	`).Scan(&word1, &word2)
+	// Fallback in case rowid has gaps that land past all rows
+	if err != nil {
+		err = b.db.QueryRow(`
+			SELECT word1, word2 FROM transitions ORDER BY rowid LIMIT 1
+		`).Scan(&word1, &word2)
+	}
 
 	if err != nil {
 		return ""
@@ -387,18 +396,33 @@ func (b *Brain) Generate(maxWords int) string {
 	return strings.Join(result, " ")
 }
 
-// GetStats returns statistics about the brain
+// GetStats returns statistics about the brain, with a 60-second cache for expensive counts.
 func (b *Brain) GetStats() BrainStats {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
+	if b.statsCache != nil && time.Since(b.statsCacheAt) < 60*time.Second {
+		cached := *b.statsCache
+		// Always refresh message count and file size (cheap)
+		cached.MessageCount, _, _ = b.cfg.GetChannelStats(b.Channel)
+		brainsDir := filepath.Join(database.GetDataDir(), "brains")
+		dbPath := filepath.Join(brainsDir, b.Channel+".db")
+		if info, err := os.Stat(dbPath); err == nil {
+			cached.DbSize = info.Size()
+		}
+		b.mu.RUnlock()
+		return cached
+	}
+	b.mu.RUnlock()
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	stats := BrainStats{
 		Channel: b.Channel,
 	}
 
-	// Get unique pairs count
+	// Count distinct pairs without string concatenation overhead
 	b.db.QueryRow(`
-		SELECT COUNT(DISTINCT word1 || '|' || word2) FROM transitions
+		SELECT COUNT(*) FROM (SELECT DISTINCT word1, word2 FROM transitions)
 	`).Scan(&stats.UniquePairs)
 
 	// Get total entries
@@ -415,6 +439,9 @@ func (b *Brain) GetStats() BrainStats {
 	if info, err := os.Stat(dbPath); err == nil {
 		stats.DbSize = info.Size()
 	}
+
+	b.statsCache = &stats
+	b.statsCacheAt = time.Now()
 
 	return stats
 }
