@@ -30,12 +30,14 @@ type Client struct {
 	writer          *bufio.Writer
 	running         bool
 	mu              sync.Mutex
+	timeoutUntil    time.Time
 	onMessage       func(channel, username, message, color, emotes, badges string)
 	onConnect       func(channel string)
 	onDisconnect    func(channel string)
 	onCommand       func(channel, username, command string)
 	onBanned        func(channel string)
 	onFollowersOnly func(channel string)
+	onTimeout       func(channel string, durationSecs int)
 	onGeneration    func(channel string, result markov.GenerationResult)
 	globalGenerator func(int) string // Function to generate from all brains
 }
@@ -61,14 +63,36 @@ func NewClient(channel string, cfg *config.Config, brain *markov.Brain) *Client 
 }
 
 // SetCallbacks sets the callback functions
-func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string), onFollowersOnly func(string), onGeneration func(string, markov.GenerationResult)) {
+func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string), onFollowersOnly func(string), onTimeout func(string, int), onGeneration func(string, markov.GenerationResult)) {
 	c.onMessage = onMessage
 	c.onConnect = onConnect
 	c.onDisconnect = onDisconnect
 	c.onCommand = onCommand
 	c.onBanned = onBanned
 	c.onFollowersOnly = onFollowersOnly
+	c.onTimeout = onTimeout
 	c.onGeneration = onGeneration
+}
+
+// IsTimedOut returns true if the bot is currently timed out in this channel.
+func (c *Client) IsTimedOut() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Before(c.timeoutUntil)
+}
+
+// TimeoutUntil returns the time when the current timeout expires (zero value if not timed out).
+func (c *Client) TimeoutUntil() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.timeoutUntil
+}
+
+// SetTimeoutUntil records the expiry time of a timeout.
+func (c *Client) SetTimeoutUntil(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.timeoutUntil = t
 }
 
 // SetGlobalGenerator sets the function to generate from all brains
@@ -397,20 +421,53 @@ func (c *Client) handleMessage(raw string) {
 			}
 
 			if result.Response != "" {
-				c.SendMessage(result.Response)
-				// Log the quote to database
-				database.SaveQuote(c.channel, result.Response)
+				// Don't send if the bot is currently timed out in this channel
+				if !c.IsTimedOut() {
+					c.SendMessage(result.Response)
+					// Log the quote to database
+					database.SaveQuote(c.channel, result.Response)
+				} else {
+					log.Printf("[%s] Skipping message generation — bot is timed out until %s", c.channel, c.TimeoutUntil().Format("15:04:05"))
+				}
+			}
+		}
+
+	case "CLEARCHAT":
+		// Target user is in msg.Content; tags include ban-duration for timeouts
+		targetUser := strings.TrimSpace(msg.Content)
+		botUsername := strings.ToLower(c.cfg.GetBotUsername())
+		if strings.ToLower(targetUser) == botUsername {
+			if durStr, ok := msg.Tags["ban-duration"]; ok && durStr != "" {
+				dur, err := strconv.Atoi(durStr)
+				if err == nil && dur > 0 {
+					log.Printf("[%s] Bot timed out for %d seconds", c.channel, dur)
+					c.SetTimeoutUntil(time.Now().Add(time.Duration(dur) * time.Second))
+					if c.onTimeout != nil {
+						c.onTimeout(c.channel, dur)
+					}
+				}
 			}
 		}
 
 	case "NOTICE":
 		log.Printf("[%s] NOTICE: %s", c.channel, msg.Content)
-		// Check for ban notice
+		// Check for ban/timeout notices
 		if msgID, ok := msg.Tags["msg-id"]; ok {
 			if msgID == "msg_banned" || msgID == "msg_channel_suspended" {
 				log.Printf("[%s] Bot is BANNED from this channel!", c.channel)
 				if c.onBanned != nil {
 					c.onBanned(c.channel)
+				}
+			} else if msgID == "msg_timedout" {
+				// "You are timed out for X more seconds." — parse remaining duration
+				// This fires when we connect and try to send while still timed out
+				remaining := parseTimeoutSeconds(msg.Content)
+				if remaining > 0 {
+					log.Printf("[%s] Bot is still timed out for %d more seconds (detected via NOTICE)", c.channel, remaining)
+					c.SetTimeoutUntil(time.Now().Add(time.Duration(remaining) * time.Second))
+					if c.onTimeout != nil {
+						c.onTimeout(c.channel, remaining)
+					}
 				}
 			}
 		}
@@ -433,6 +490,21 @@ func (c *Client) handleMessage(raw string) {
 		c.Connect()
 		go c.Run()
 	}
+}
+
+// parseTimeoutSeconds extracts the remaining seconds from a msg_timedout NOTICE.
+// Twitch sends: "You are timed out for X more seconds." or "You are permanently banned."
+func parseTimeoutSeconds(content string) int {
+	// Look for a number followed by " more second"
+	fields := strings.Fields(content)
+	for i, f := range fields {
+		if (f == "more" || f == "more.") && i > 0 {
+			if n, err := strconv.Atoi(fields[i-1]); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // unescapeIRCTag unescapes Twitch IRC tag values per the IRCv3 spec.

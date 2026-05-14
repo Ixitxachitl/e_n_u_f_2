@@ -636,6 +636,8 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 				"timer_enabled":     s.cfg.GetChannelTimerEnabled(ch.Channel),
 				"timer_minutes":     s.cfg.GetChannelTimerMinutes(ch.Channel),
 				"followers_only":    s.manager.IsChannelFollowersOnly(ch.Channel),
+				"timed_out":         s.manager.IsChannelTimedOut(ch.Channel),
+				"timeout_until":     s.manager.GetChannelTimeoutUntil(ch.Channel),
 			}
 		}
 		jsonResponse(w, result)
@@ -816,17 +818,28 @@ func (s *Server) handleLiveChannels(w http.ResponseWriter, r *http.Request) {
 		if stream, isLive := liveStreams[strings.ToLower(ch.Channel)]; isLive {
 			countdown, interval := brainMgr.GetChannelCountdown(ch.Channel)
 			lastMsg := brainMgr.GetLastMessage(ch.Channel)
+			isTimedOut := s.manager.IsChannelTimedOut(ch.Channel)
+			timeoutUntil := s.manager.GetChannelTimeoutUntil(ch.Channel)
+			var timeoutRemainingSecs int
+			if isTimedOut {
+				timeoutRemainingSecs = int(time.Until(timeoutUntil).Seconds())
+				if timeoutRemainingSecs < 0 {
+					timeoutRemainingSecs = 0
+				}
+			}
 			result = append(result, map[string]interface{}{
-				"channel":           ch.Channel,
-				"title":             stream.Title,
-				"game":              stream.GameName,
-				"viewers":           stream.ViewerCount,
-				"started_at":        stream.StartedAt,
-				"messages_until":    countdown,
-				"message_interval":  interval,
-				"last_message":      lastMsg,
-				"profile_image_url": stream.ProfileImageURL,
-				"followers_only":    s.manager.IsChannelFollowersOnly(ch.Channel),
+				"channel":                ch.Channel,
+				"title":                  stream.Title,
+				"game":                   stream.GameName,
+				"viewers":                stream.ViewerCount,
+				"started_at":             stream.StartedAt,
+				"messages_until":         countdown,
+				"message_interval":       interval,
+				"last_message":           lastMsg,
+				"profile_image_url":      stream.ProfileImageURL,
+				"followers_only":         s.manager.IsChannelFollowersOnly(ch.Channel),
+				"timed_out":              isTimedOut,
+				"timeout_remaining_secs": timeoutRemainingSecs,
 			})
 		}
 	}

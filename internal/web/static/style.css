@@ -662,6 +662,21 @@ input[type="password"]::placeholder {
     margin-left: 6px;
 }
 
+.live-channel-item.timed-out {
+    opacity: 0.75;
+}
+
+.countdown-display.timed-out-display {
+    background: linear-gradient(135deg, #e65100, #bf360c);
+}
+
+.timed-out-badge {
+    font-size: 0.7rem;
+    color: #ff8f00;
+    font-weight: 600;
+    margin-left: 6px;
+}
+
 .countdown-display {
     display: flex;
     flex-direction: column;

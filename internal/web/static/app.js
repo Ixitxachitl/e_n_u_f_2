@@ -623,6 +623,11 @@ function handleWebSocketEvent(data) {
         const d = data.data;
         addSystemEntry(d.channel, `🚫 Disconnected — followers-only mode. Whispered: "${d.message}"`);
         loadChannels();
+    } else if (data.event === 'timed_out') {
+        const d = data.data;
+        const mins = Math.ceil(d.duration_sec / 60);
+        addSystemEntry(d.channel, `⏱️ Bot timed out for ${d.duration_sec}s (~${mins}m) — message generation suppressed`);
+        loadLiveChannels();
     } else if (data.event === 'new_quote') {
         // Auto-refresh quotes list if on first page
         if (quotesState.page === 1) {
@@ -1125,6 +1130,8 @@ function renderLiveChannels(liveChannels) {
         const percentage = Math.round(((interval - countdown) / interval) * 100);
         const lastMsg = ch.last_message || '';
         const isFollowersOnly = ch.followers_only || false;
+        const isTimedOut = ch.timed_out || false;
+        const timeoutSecs = ch.timeout_remaining_secs || 0;
         const profileImg = ch.profile_image_url 
             ? `<img src="${ch.profile_image_url}" class="channel-avatar-large" alt="${ch.channel}">` 
             : `<span class="channel-avatar-placeholder-large"></span>`;
@@ -1132,26 +1139,40 @@ function renderLiveChannels(liveChannels) {
         const followersOnlyBadge = isFollowersOnly 
             ? `<span class="followers-only-badge" title="Followers-only mode — bot disconnected">🚫 Followers Only</span>` 
             : '';
-        
+
+        const timedOutBadge = isTimedOut
+            ? `<span class="timed-out-badge" title="Bot is timed out — message generation paused">⏱️ Timed Out</span>`
+            : '';
+
+        // Format timeout countdown
+        let timeoutLabel = '';
+        if (isTimedOut && timeoutSecs > 0) {
+            const m = Math.floor(timeoutSecs / 60);
+            const s = timeoutSecs % 60;
+            timeoutLabel = m > 0 ? `${m}m ${s}s` : `${s}s`;
+        }
+
+        const itemClass = isFollowersOnly ? ' followers-only' : (isTimedOut ? ' timed-out' : '');
+
         return `
-        <div class="list-item live-channel-item${isFollowersOnly ? ' followers-only' : ''}" onclick="window.open('https://twitch.tv/${ch.channel}', '_blank')">
-            <div class="countdown-display">
-                <div class="countdown-number">${isFollowersOnly ? '🚫' : countdown}</div>
-                <div class="countdown-label">${isFollowersOnly ? '' : 'msgs'}</div>
+        <div class="list-item live-channel-item${itemClass}" onclick="window.open('https://twitch.tv/${ch.channel}', '_blank')">
+            <div class="countdown-display${isTimedOut ? ' timed-out-display' : ''}">
+                <div class="countdown-number">${isFollowersOnly ? '🚫' : (isTimedOut ? '⏱️' : countdown)}</div>
+                <div class="countdown-label">${isFollowersOnly ? '' : (isTimedOut ? timeoutLabel : 'msgs')}</div>
             </div>
             ${profileImg}
             <div class="info">
                 <div class="name">
-                    ${ch.channel} ${followersOnlyBadge}
+                    ${ch.channel} ${followersOnlyBadge}${timedOutBadge}
                 </div>
                 <div class="stats">
                     ${ch.game || 'Unknown Game'} • ${ch.viewers.toLocaleString()} viewers
                 </div>
                 <div class="stream-title">${escapeHtml(ch.title || '')}</div>
-                ${isFollowersOnly ? '' : `<div class="countdown-bar">
+                ${(isFollowersOnly || isTimedOut) ? '' : `<div class="countdown-bar">
                     <div class="countdown-progress" style="width: ${percentage}%"></div>
                 </div>`}
-                ${lastMsg && !isFollowersOnly ? `<div class="last-bot-message">🤖 ${escapeHtml(lastMsg)}</div>` : ''}
+                ${lastMsg && !isFollowersOnly && !isTimedOut ? `<div class="last-bot-message">🤖 ${escapeHtml(lastMsg)}</div>` : ''}
             </div>
         </div>
     `}).join('');

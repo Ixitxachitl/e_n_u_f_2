@@ -33,6 +33,7 @@ type Manager struct {
 	lastActivity  map[string]time.Time // last message time per channel for inactivity timer
 	timerFired    map[string]bool      // whether timer already fired since last activity
 	followersOnly map[string]bool      // channels flagged as followers-only (skip until offline)
+	timedOut      map[string]time.Time // timeout expiry time per channel (zero = not timed out)
 	mu            sync.RWMutex
 	running       bool
 	eventHandler  func(event string, data interface{})
@@ -50,6 +51,7 @@ func NewManager(cfg *config.Config) *Manager {
 		lastActivity:  make(map[string]time.Time),
 		timerFired:    make(map[string]bool),
 		followersOnly: make(map[string]bool),
+		timedOut:      make(map[string]time.Time),
 		reconnecting:  make(map[string]bool),
 		stopChan:      make(chan struct{}),
 	}
@@ -130,6 +132,7 @@ func (m *Manager) JoinChannel(channel string) error {
 		m.onCommand,
 		m.onBanned,
 		m.onFollowersOnly,
+		m.onTimeout,
 		m.onGeneration,
 	)
 
@@ -479,6 +482,47 @@ func (m *Manager) onFollowersOnly(channel string) {
 	}(channel, whisperMsg)
 
 	m.leaveChannelQuietly(channel)
+}
+
+func (m *Manager) onTimeout(channel string, durationSecs int) {
+	channel = strings.ToLower(channel)
+	expiry := time.Now().Add(time.Duration(durationSecs) * time.Second)
+
+	m.mu.Lock()
+	m.timedOut[channel] = expiry
+	m.mu.Unlock()
+
+	log.Printf("[%s] Bot timed out for %ds — message generation suppressed until %s", channel, durationSecs, expiry.Format("15:04:05"))
+
+	m.mu.RLock()
+	handler := m.eventHandler
+	m.mu.RUnlock()
+	if handler != nil {
+		handler("timed_out", map[string]interface{}{
+			"channel":      channel,
+			"duration_sec": durationSecs,
+			"until":        expiry.Format(time.RFC3339),
+		})
+	}
+}
+
+// IsChannelTimedOut returns whether the bot is currently timed out in a channel.
+func (m *Manager) IsChannelTimedOut(channel string) bool {
+	m.mu.RLock()
+	expiry := m.timedOut[strings.ToLower(channel)]
+	m.mu.RUnlock()
+	return !expiry.IsZero() && time.Now().Before(expiry)
+}
+
+// GetChannelTimeoutUntil returns the timeout expiry time for a channel (zero value if not timed out).
+func (m *Manager) GetChannelTimeoutUntil(channel string) time.Time {
+	m.mu.RLock()
+	expiry := m.timedOut[strings.ToLower(channel)]
+	m.mu.RUnlock()
+	if expiry.IsZero() || time.Now().After(expiry) {
+		return time.Time{}
+	}
+	return expiry
 }
 
 // sendWhisper sends a whisper (DM) to a user via the Twitch Helix API
@@ -847,6 +891,12 @@ func (m *Manager) checkInactivityTimers() {
 // generateTimerMessage generates and sends a message due to inactivity timer
 func (m *Manager) generateTimerMessage(channel string, client *Client) {
 	if !client.IsConnected() {
+		return
+	}
+
+	// Don't generate if the bot is currently timed out in this channel
+	if client.IsTimedOut() {
+		log.Printf("[%s] Inactivity timer skipped — bot is timed out until %s", channel, client.TimeoutUntil().Format("15:04:05"))
 		return
 	}
 
