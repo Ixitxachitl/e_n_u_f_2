@@ -348,6 +348,7 @@ function cacheElements() {
     elements.newBlacklistWord = document.getElementById('new-blacklist-word');
     elements.newIgnoredUser = document.getElementById('new-ignored-user');
     elements.clientId = document.getElementById('client-id');
+    elements.clientSecret = document.getElementById('client-secret');
     elements.refreshTokenBtn = document.getElementById('refresh-token-btn');
     elements.tokenExpiryInfo = document.getElementById('token-expiry-info');
     elements.deviceFlowView = document.getElementById('device-flow-view');
@@ -891,7 +892,7 @@ async function loadConfig() {
         // Token expiry / refresh UI
         if (elements.tokenExpiryInfo && elements.refreshTokenBtn) {
             const expiresAt = config.token_expires_at || 0;
-            const canRefresh = !!config.refresh_token_set;
+            const canRefresh = !!config.refresh_token_set && !!config.client_secret_set;
             if (expiresAt > 0) {
                 const remainingSec = expiresAt - Math.floor(Date.now() / 1000);
                 if (remainingSec > 0) {
@@ -904,12 +905,12 @@ async function loadConfig() {
                     else when = `${mins}m`;
                     elements.tokenExpiryInfo.textContent = canRefresh
                         ? `Token expires in ${when} — will auto-refresh.`
-                        : `Token expires in ${when}. Auto-refresh disabled (re-login to enable).`;
+                        : `Token expires in ${when}. Add a Client Secret + re-login to enable auto-refresh.`;
                 } else {
                     elements.tokenExpiryInfo.textContent = 'Token is expired.';
                 }
             } else {
-                elements.tokenExpiryInfo.textContent = 'Token expiry unknown (legacy login). Re-login to enable auto-refresh.';
+                elements.tokenExpiryInfo.textContent = 'Token expiry unknown (legacy login). Re-login to enable expiry tracking.';
             }
             elements.tokenExpiryInfo.style.display = 'block';
             elements.refreshTokenBtn.style.display = canRefresh ? 'inline-block' : 'none';
@@ -964,6 +965,13 @@ async function startDeviceFlow() {
         return;
     }
     localStorage.setItem('lastClientId', clientId);
+
+    // Persist the (optional) client_secret before starting the flow so the
+    // background refresher can use it later.
+    const clientSecret = elements.clientSecret ? elements.clientSecret.value.trim() : '';
+    try {
+        await api.put('/api/config', { client_id: clientId, client_secret: clientSecret });
+    } catch (_) { /* non-fatal — device/start will also store client_id */ }
 
     elements.twitchLoginBtn.disabled = true;
     try {
