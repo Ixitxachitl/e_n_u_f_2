@@ -36,6 +36,9 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
+// helixChunkSize bounds how many logins we send in a single Twitch Helix request.
+const helixChunkSize = 25
+
 // Server represents the web UI server
 type Server struct {
 	cfg           *config.Config
@@ -398,7 +401,7 @@ func (s *Server) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate token and get user info from Twitch
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	httpReq, _ := http.NewRequest("GET", "https://api.twitch.tv/helix/users", nil)
 	httpReq.Header.Set("Authorization", "Bearer "+req.AccessToken)
 	httpReq.Header.Set("Client-Id", s.cfg.GetClientID())
@@ -861,62 +864,69 @@ func (s *Server) getLiveStreams(channels []string, clientID, oauthToken string) 
 		return result
 	}
 
-	// Build query params
-	params := "?"
-	for i, ch := range channels {
-		if i > 0 {
-			params += "&"
-		}
-		params += "user_login=" + strings.ToLower(ch)
-	}
-
-	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams"+params, nil)
-	if err != nil {
-		log.Printf("Error creating Twitch API request: %v", err)
-		return result
-	}
-
-	// Remove "oauth:" prefix if present
 	token := strings.TrimPrefix(oauthToken, "oauth:")
+	client := &http.Client{Timeout: 30 * time.Second}
 
-	req.Header.Set("Client-ID", clientID)
-	req.Header.Set("Authorization", "Bearer "+token)
+	for start := 0; start < len(channels); start += helixChunkSize {
+		end := start + helixChunkSize
+		if end > len(channels) {
+			end = len(channels)
+		}
+		chunk := channels[start:end]
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error calling Twitch API: %v", err)
-		return result
-	}
-	defer resp.Body.Close()
+		params := "?"
+		for i, ch := range chunk {
+			if i > 0 {
+				params += "&"
+			}
+			params += "user_login=" + strings.ToLower(ch)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("Twitch API error %d: %s", resp.StatusCode, string(body))
-		return result
-	}
+		req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams"+params, nil)
+		if err != nil {
+			log.Printf("Error creating Twitch API request: %v", err)
+			continue
+		}
+		req.Header.Set("Client-ID", clientID)
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	var apiResp struct {
-		Data []struct {
-			UserLogin   string `json:"user_login"`
-			Title       string `json:"title"`
-			GameName    string `json:"game_name"`
-			ViewerCount int    `json:"viewer_count"`
-			StartedAt   string `json:"started_at"`
-		} `json:"data"`
-	}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Error calling Twitch API (chunk %d-%d): %v", start, end, err)
+			continue
+		}
 
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		log.Printf("Error decoding Twitch API response: %v", err)
-		return result
-	}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			log.Printf("Twitch API error %d: %s", resp.StatusCode, string(body))
+			continue
+		}
 
-	for _, stream := range apiResp.Data {
-		result[strings.ToLower(stream.UserLogin)] = twitchStream{
-			Title:       stream.Title,
-			GameName:    stream.GameName,
-			ViewerCount: stream.ViewerCount,
-			StartedAt:   stream.StartedAt,
+		var apiResp struct {
+			Data []struct {
+				UserLogin   string `json:"user_login"`
+				Title       string `json:"title"`
+				GameName    string `json:"game_name"`
+				ViewerCount int    `json:"viewer_count"`
+				StartedAt   string `json:"started_at"`
+			} `json:"data"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&apiResp)
+		resp.Body.Close()
+		if err != nil {
+			log.Printf("Error decoding Twitch API response: %v", err)
+			continue
+		}
+
+		for _, stream := range apiResp.Data {
+			result[strings.ToLower(stream.UserLogin)] = twitchStream{
+				Title:       stream.Title,
+				GameName:    stream.GameName,
+				ViewerCount: stream.ViewerCount,
+				StartedAt:   stream.StartedAt,
+			}
 		}
 	}
 
@@ -943,48 +953,57 @@ func (s *Server) getUserProfiles(usernames []string, clientID, oauthToken string
 		return result
 	}
 
-	// Build query params
-	params := "?"
-	for i, username := range usernames {
-		if i > 0 {
-			params += "&"
-		}
-		params += "login=" + strings.ToLower(username)
-	}
-
-	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users"+params, nil)
-	if err != nil {
-		return result
-	}
-
 	token := strings.TrimPrefix(oauthToken, "oauth:")
-	req.Header.Set("Client-ID", clientID)
-	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 30 * time.Second}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return result
-	}
-	defer resp.Body.Close()
+	for start := 0; start < len(usernames); start += helixChunkSize {
+		end := start + helixChunkSize
+		if end > len(usernames) {
+			end = len(usernames)
+		}
+		chunk := usernames[start:end]
 
-	if resp.StatusCode != http.StatusOK {
-		return result
-	}
+		params := "?"
+		for i, username := range chunk {
+			if i > 0 {
+				params += "&"
+			}
+			params += "login=" + strings.ToLower(username)
+		}
 
-	var apiResp struct {
-		Data []struct {
-			Login           string `json:"login"`
-			ProfileImageURL string `json:"profile_image_url"`
-		} `json:"data"`
-	}
+		req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users"+params, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Client-ID", clientID)
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return result
-	}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
 
-	for _, user := range apiResp.Data {
-		result[strings.ToLower(user.Login)] = user.ProfileImageURL
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+
+		var apiResp struct {
+			Data []struct {
+				Login           string `json:"login"`
+				ProfileImageURL string `json:"profile_image_url"`
+			} `json:"data"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&apiResp)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+
+		for _, user := range apiResp.Data {
+			result[strings.ToLower(user.Login)] = user.ProfileImageURL
+		}
 	}
 
 	return result

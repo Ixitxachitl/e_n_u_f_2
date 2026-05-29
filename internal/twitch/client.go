@@ -23,23 +23,24 @@ const (
 
 // Client represents a Twitch IRC client for a single channel
 type Client struct {
-	channel         string
-	cfg             *config.Config
-	brain           *markov.Brain
-	conn            net.Conn
-	writer          *bufio.Writer
-	running         bool
-	mu              sync.Mutex
-	timeoutUntil    time.Time
-	onMessage       func(channel, username, message, color, emotes, badges string)
-	onConnect       func(channel string)
-	onDisconnect    func(channel string)
-	onCommand       func(channel, username, command string)
-	onBanned        func(channel string)
-	onFollowersOnly func(channel string)
-	onTimeout       func(channel string, durationSecs int)
-	onGeneration    func(channel string, result markov.GenerationResult)
-	globalGenerator func(int) string // Function to generate from all brains
+	channel          string
+	cfg              *config.Config
+	brain            *markov.Brain
+	conn             net.Conn
+	writer           *bufio.Writer
+	running          bool
+	mu               sync.Mutex
+	timeoutUntil     time.Time
+	onMessage        func(channel, username, message, color, emotes, badges string)
+	onConnect        func(channel string)
+	onDisconnect     func(channel string)
+	onCommand        func(channel, username, command string)
+	onBanned         func(channel string)
+	onFollowersOnly  func(channel string)
+	onTimeout        func(channel string, durationSecs int)
+	onTimeoutCleared func(channel string)
+	onGeneration     func(channel string, result markov.GenerationResult)
+	globalGenerator  func(int) string // Function to generate from all brains
 }
 
 // Message represents a parsed IRC message
@@ -63,7 +64,7 @@ func NewClient(channel string, cfg *config.Config, brain *markov.Brain) *Client 
 }
 
 // SetCallbacks sets the callback functions
-func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string), onFollowersOnly func(string), onTimeout func(string, int), onGeneration func(string, markov.GenerationResult)) {
+func (c *Client) SetCallbacks(onMessage func(string, string, string, string, string, string), onConnect func(string), onDisconnect func(string), onCommand func(string, string, string), onBanned func(string), onFollowersOnly func(string), onTimeout func(string, int), onTimeoutCleared func(string), onGeneration func(string, markov.GenerationResult)) {
 	c.onMessage = onMessage
 	c.onConnect = onConnect
 	c.onDisconnect = onDisconnect
@@ -71,6 +72,7 @@ func (c *Client) SetCallbacks(onMessage func(string, string, string, string, str
 	c.onBanned = onBanned
 	c.onFollowersOnly = onFollowersOnly
 	c.onTimeout = onTimeout
+	c.onTimeoutCleared = onTimeoutCleared
 	c.onGeneration = onGeneration
 }
 
@@ -210,6 +212,21 @@ func (c *Client) Disconnect() {
 	}
 }
 
+// ForceClose closes the underlying connection without acquiring c.mu.
+// This is safe to call concurrently with Read/Write (net.Conn.Close is
+// goroutine-safe) and is used to break any goroutine blocked on a hung
+// TCP read/write so the c.mu mutex can be acquired afterwards.
+func (c *Client) ForceClose() {
+	// Read c.conn without the lock. A torn read is acceptable here: the
+	// worst case is we see a stale non-nil pointer to an already-closed
+	// conn (Close is idempotent on *net.Conn / *tls.Conn) or a stale nil
+	// (in which case there is nothing to unblock).
+	conn := c.conn
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
 // SendMessage sends a chat message to the channel
 func (c *Client) SendMessage(message string) {
 	c.mu.Lock()
@@ -244,6 +261,12 @@ func (c *Client) sendRaw(message string) {
 	if c.writer == nil {
 		return
 	}
+	// Bound write time so a half-open TCP connection can't hang us forever
+	// while holding c.mu. If the deadline fires, the Flush below returns an
+	// error and the connection will be torn down by the read loop / reconnect.
+	if c.conn != nil {
+		_ = c.conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	}
 	c.writer.WriteString(message + "\r\n")
 	c.writer.Flush()
 }
@@ -252,6 +275,9 @@ func (c *Client) sendRaw(message string) {
 func (c *Client) sendRawErr(message string) error {
 	if c.writer == nil {
 		return fmt.Errorf("writer is nil")
+	}
+	if c.conn != nil {
+		_ = c.conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
 	}
 	if _, err := c.writer.WriteString(message + "\r\n"); err != nil {
 		return err
@@ -433,7 +459,8 @@ func (c *Client) handleMessage(raw string) {
 		}
 
 	case "CLEARCHAT":
-		// Target user is in msg.Content; tags include ban-duration for timeouts
+		// Target user is in msg.Content; tags include ban-duration for timeouts.
+		// If ban-duration is absent and bot was timed out, the timeout was lifted early.
 		targetUser := strings.TrimSpace(msg.Content)
 		botUsername := strings.ToLower(c.cfg.GetBotUsername())
 		if strings.ToLower(targetUser) == botUsername {
@@ -445,6 +472,13 @@ func (c *Client) handleMessage(raw string) {
 					if c.onTimeout != nil {
 						c.onTimeout(c.channel, dur)
 					}
+				}
+			} else if c.IsTimedOut() {
+				// No ban-duration tag means the timeout was removed by a moderator
+				log.Printf("[%s] Bot timeout was cleared by a moderator", c.channel)
+				c.SetTimeoutUntil(time.Time{})
+				if c.onTimeoutCleared != nil {
+					c.onTimeoutCleared(c.channel)
 				}
 			}
 		}

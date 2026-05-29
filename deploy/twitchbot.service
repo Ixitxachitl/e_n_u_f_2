@@ -2,6 +2,7 @@
 Description=e_n_u_f 2.0 Twitch Bot
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

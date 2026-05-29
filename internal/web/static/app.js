@@ -628,6 +628,10 @@ function handleWebSocketEvent(data) {
         const mins = Math.ceil(d.duration_sec / 60);
         addSystemEntry(d.channel, `⏱️ Bot timed out for ${d.duration_sec}s (~${mins}m) — message generation suppressed`);
         loadLiveChannels();
+    } else if (data.event === 'timeout_cleared') {
+        const d = data.data;
+        addSystemEntry(d.channel, `✅ Timeout cleared — message generation resumed`);
+        loadLiveChannels();
     } else if (data.event === 'new_quote') {
         // Auto-refresh quotes list if on first page
         if (quotesState.page === 1) {

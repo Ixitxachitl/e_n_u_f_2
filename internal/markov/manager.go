@@ -125,7 +125,6 @@ func (m *Manager) ListBrains() []BrainStats {
 	}
 	m.mu.RUnlock()
 
-	listStart := time.Now()
 	brainsDir := filepath.Join(database.GetDataDir(), "brains")
 
 	// Ensure directory exists
@@ -155,20 +154,15 @@ func (m *Manager) ListBrains() []BrainStats {
 		brain, loaded := m.brains[channel]
 		m.mu.RUnlock()
 
-		brainStart := time.Now()
 		if loaded && brain != nil {
 			s := brain.GetStats()
-			log.Printf("[brain] stats for loaded brain %q: %d entries, took %v", channel, s.TotalEntries, time.Since(brainStart))
 			stats = append(stats, s)
 		} else {
 			// Query stats from the DB file without permanently loading the brain
 			s := m.getStatsFromFile(channel, brainsDir)
-			log.Printf("[brain] stats for unloaded brain %q: %d entries, took %v", channel, s.TotalEntries, time.Since(brainStart))
 			stats = append(stats, s)
 		}
 	}
-
-	log.Printf("[brain] ListBrains completed for %d brain(s) in %v", len(stats), time.Since(listStart))
 
 	m.mu.Lock()
 	m.listCache = stats
@@ -197,13 +191,8 @@ func (m *Manager) getStatsFromFile(channel, brainsDir string) BrainStats {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(0)
 
-	t0 := time.Now()
 	db.QueryRow(`SELECT COUNT(*) FROM (SELECT DISTINCT word1, word2 FROM transitions)`).Scan(&stats.UniquePairs)
-	log.Printf("[brain] getStatsFromFile %q: UniquePairs query took %v", channel, time.Since(t0))
-
-	t0 = time.Now()
 	db.QueryRow(`SELECT COUNT(*) FROM transitions`).Scan(&stats.TotalEntries)
-	log.Printf("[brain] getStatsFromFile %q: TotalEntries query took %v", channel, time.Since(t0))
 
 	stats.MessageCount, _, _ = m.cfg.GetChannelStats(channel)
 

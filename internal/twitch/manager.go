@@ -133,6 +133,7 @@ func (m *Manager) JoinChannel(channel string) error {
 		m.onBanned,
 		m.onFollowersOnly,
 		m.onTimeout,
+		m.onTimeoutCleared,
 		m.onGeneration,
 	)
 
@@ -314,6 +315,19 @@ func (m *Manager) onMessage(channel, username, message, color, emotes, badges st
 }
 
 func (m *Manager) onConnect(channel string) {
+	channel = strings.ToLower(channel)
+
+	// Clear any stale timeout state from a previous session. If the bot was
+	// timed out when it disconnected, a mod may have lifted it while offline.
+	// We'll re-detect an active timeout via the msg_timedout NOTICE on first send.
+	// NOTE: do NOT call client.SetTimeoutUntil here — ConnectWithRetry holds
+	// c.mu when it calls onConnect, so re-entering the client mutex deadlocks.
+	// The client is always freshly created via NewClient, so timeoutUntil is
+	// already zero.
+	m.mu.Lock()
+	delete(m.timedOut, channel)
+	m.mu.Unlock()
+
 	m.mu.RLock()
 	handler := m.eventHandler
 	m.mu.RUnlock()
@@ -386,21 +400,31 @@ func (m *Manager) reconnectChannel(channel string) {
 		case <-time.After(delay):
 		}
 
-		// Clean up old client before reconnecting
+		// Clean up old client before reconnecting.
+		// IMPORTANT: snapshot the old client under m.mu, but do the conn close
+		// WITHOUT holding either m.mu or oldClient.mu. If a goroutine is stuck
+		// in a hung TCP write while holding oldClient.mu, acquiring oldClient.mu
+		// here would deadlock the entire manager (every other goroutine that
+		// needs m.mu would then pile up behind us). ForceClose is lock-free
+		// and unblocks any pending Read/Write so we can safely acquire the
+		// mutex afterwards to finish state cleanup.
 		m.mu.Lock()
-		if oldClient, exists := m.clients[channel]; exists {
-			// Set running=false directly to prevent Disconnect from triggering another onDisconnect
-			oldClient.mu.Lock()
-			oldClient.running = false
-			if oldClient.conn != nil {
-				oldClient.conn.Close()
-				oldClient.conn = nil
-			}
-			oldClient.mu.Unlock()
+		oldClient, exists := m.clients[channel]
+		if exists {
 			delete(m.clients, channel)
 			delete(m.msgCounts, channel)
 		}
 		m.mu.Unlock()
+
+		if exists {
+			// Break any hung Read/Write first (lock-free).
+			oldClient.ForceClose()
+			// Now it's safe to take the mutex to clear residual state.
+			oldClient.mu.Lock()
+			oldClient.running = false
+			oldClient.conn = nil
+			oldClient.mu.Unlock()
+		}
 
 		err := m.JoinChannel(channel)
 		if err == nil {
@@ -506,6 +530,25 @@ func (m *Manager) onTimeout(channel string, durationSecs int) {
 	}
 }
 
+func (m *Manager) onTimeoutCleared(channel string) {
+	channel = strings.ToLower(channel)
+
+	m.mu.Lock()
+	delete(m.timedOut, channel)
+	m.mu.Unlock()
+
+	log.Printf("[%s] Bot timeout cleared — message generation resumed", channel)
+
+	m.mu.RLock()
+	handler := m.eventHandler
+	m.mu.RUnlock()
+	if handler != nil {
+		handler("timeout_cleared", map[string]interface{}{
+			"channel": channel,
+		})
+	}
+}
+
 // IsChannelTimedOut returns whether the bot is currently timed out in a channel.
 func (m *Manager) IsChannelTimedOut(channel string) bool {
 	m.mu.RLock()
@@ -560,7 +603,7 @@ func (m *Manager) sendWhisper(toUsername, message string) error {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("whisper API request failed: %w", err)
@@ -738,7 +781,7 @@ func (m *Manager) lookupTwitchUser(username, clientID, oauthToken string) (userI
 	req.Header.Set("Client-ID", clientID)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error looking up Twitch user %s: %v", username, err)
@@ -1153,6 +1196,11 @@ func (m *Manager) ensureChannelIDs(channels []string, clientID, oauthToken strin
 	return result
 }
 
+// helixChunkSize bounds how many logins/IDs we send in a single Helix request.
+// Twitch allows up to 100, but smaller chunks keep URLs short, reduce per-request
+// latency on slow links, and prevent total failure when a single chunk times out.
+const helixChunkSize = 25
+
 // lookupUserIDs looks up Twitch user IDs for a list of usernames
 func (m *Manager) lookupUserIDs(usernames []string, clientID, oauthToken string) map[string]string {
 	result := make(map[string]string)
@@ -1160,49 +1208,58 @@ func (m *Manager) lookupUserIDs(usernames []string, clientID, oauthToken string)
 		return result
 	}
 
-	// Build query params (max 100 per request)
-	params := "?"
-	for i, name := range usernames {
-		if i > 0 {
-			params += "&"
-		}
-		params += "login=" + strings.ToLower(name)
-	}
-
-	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users"+params, nil)
-	if err != nil {
-		return result
-	}
-
 	token := strings.TrimPrefix(oauthToken, "oauth:")
-	req.Header.Set("Client-ID", clientID)
-	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 30 * time.Second}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error looking up user IDs: %v", err)
-		return result
-	}
-	defer resp.Body.Close()
+	for start := 0; start < len(usernames); start += helixChunkSize {
+		end := start + helixChunkSize
+		if end > len(usernames) {
+			end = len(usernames)
+		}
+		chunk := usernames[start:end]
 
-	if resp.StatusCode != http.StatusOK {
-		return result
-	}
+		params := "?"
+		for i, name := range chunk {
+			if i > 0 {
+				params += "&"
+			}
+			params += "login=" + strings.ToLower(name)
+		}
 
-	var apiResp struct {
-		Data []struct {
-			ID    string `json:"id"`
-			Login string `json:"login"`
-		} `json:"data"`
-	}
+		req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users"+params, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Client-ID", clientID)
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return result
-	}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Error looking up user IDs (chunk %d-%d): %v", start, end, err)
+			continue
+		}
 
-	for _, user := range apiResp.Data {
-		result[strings.ToLower(user.Login)] = user.ID
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+
+		var apiResp struct {
+			Data []struct {
+				ID    string `json:"id"`
+				Login string `json:"login"`
+			} `json:"data"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&apiResp)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+
+		for _, user := range apiResp.Data {
+			result[strings.ToLower(user.Login)] = user.ID
+		}
 	}
 
 	return result
@@ -1215,53 +1272,62 @@ func (m *Manager) lookupUsernamesByID(userIDs []string, clientID, oauthToken str
 		return result
 	}
 
-	// Build query params (max 100 per request)
-	params := "?"
-	for i, id := range userIDs {
-		if i > 0 {
-			params += "&"
-		}
-		params += "id=" + id
-	}
-
-	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users"+params, nil)
-	if err != nil {
-		return result
-	}
-
 	token := strings.TrimPrefix(oauthToken, "oauth:")
-	req.Header.Set("Client-ID", clientID)
-	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 30 * time.Second}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error looking up usernames by ID: %v", err)
-		return result
-	}
-	defer resp.Body.Close()
+	for start := 0; start < len(userIDs); start += helixChunkSize {
+		end := start + helixChunkSize
+		if end > len(userIDs) {
+			end = len(userIDs)
+		}
+		chunk := userIDs[start:end]
 
-	if resp.StatusCode != http.StatusOK {
-		return result
-	}
+		params := "?"
+		for i, id := range chunk {
+			if i > 0 {
+				params += "&"
+			}
+			params += "id=" + id
+		}
 
-	var apiResp struct {
-		Data []struct {
-			ID          string `json:"id"`
-			Login       string `json:"login"`
-			DisplayName string `json:"display_name"`
-		} `json:"data"`
-	}
+		req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/users"+params, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Client-ID", clientID)
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return result
-	}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Error looking up usernames by ID (chunk %d-%d): %v", start, end, err)
+			continue
+		}
 
-	for _, user := range apiResp.Data {
-		result[user.ID] = strings.ToLower(user.Login)
-		// Also update display name while we're at it
-		if user.DisplayName != "" {
-			m.cfg.SetChannelDisplayName(strings.ToLower(user.Login), user.DisplayName)
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+
+		var apiResp struct {
+			Data []struct {
+				ID          string `json:"id"`
+				Login       string `json:"login"`
+				DisplayName string `json:"display_name"`
+			} `json:"data"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&apiResp)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+
+		for _, user := range apiResp.Data {
+			result[user.ID] = strings.ToLower(user.Login)
+			// Also update display name while we're at it
+			if user.DisplayName != "" {
+				m.cfg.SetChannelDisplayName(strings.ToLower(user.Login), user.DisplayName)
+			}
 		}
 	}
 
@@ -1291,59 +1357,68 @@ func (m *Manager) getLiveChannelSetByID(channelIDs map[string]string, clientID, 
 		return
 	}
 
-	// Build query params using user IDs (max 100 per request)
-	params := "?"
-	for i, id := range userIDs {
-		if i > 0 {
-			params += "&"
-		}
-		params += "user_id=" + id
-	}
-
-	req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams"+params, nil)
-	if err != nil {
-		return
-	}
-
 	token := strings.TrimPrefix(oauthToken, "oauth:")
-	req.Header.Set("Client-ID", clientID)
-	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 30 * time.Second}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error checking live channels: %v", err)
-		return
-	}
-	defer resp.Body.Close()
+	for start := 0; start < len(userIDs); start += helixChunkSize {
+		end := start + helixChunkSize
+		if end > len(userIDs) {
+			end = len(userIDs)
+		}
+		chunk := userIDs[start:end]
 
-	if resp.StatusCode != http.StatusOK {
-		return
-	}
+		params := "?"
+		for i, id := range chunk {
+			if i > 0 {
+				params += "&"
+			}
+			params += "user_id=" + id
+		}
 
-	var apiResp struct {
-		Data []struct {
-			UserID    string `json:"user_id"`
-			UserLogin string `json:"user_login"`
-		} `json:"data"`
-	}
+		req, err := http.NewRequest("GET", "https://api.twitch.tv/helix/streams"+params, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Client-ID", clientID)
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return
-	}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Error checking live channels (chunk %d-%d): %v", start, end, err)
+			continue
+		}
 
-	for _, stream := range apiResp.Data {
-		currentUsername := strings.ToLower(stream.UserLogin)
-		storedUsername := idToUsername[stream.UserID]
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
 
-		// Check for username change
-		if storedUsername != "" && storedUsername != currentUsername {
-			usernameChanges[storedUsername] = currentUsername
-			live[currentUsername] = true
-		} else if storedUsername != "" {
-			live[storedUsername] = true
-		} else {
-			live[currentUsername] = true
+		var apiResp struct {
+			Data []struct {
+				UserID    string `json:"user_id"`
+				UserLogin string `json:"user_login"`
+			} `json:"data"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&apiResp)
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+
+		for _, stream := range apiResp.Data {
+			currentUsername := strings.ToLower(stream.UserLogin)
+			storedUsername := idToUsername[stream.UserID]
+
+			// Check for username change
+			if storedUsername != "" && storedUsername != currentUsername {
+				usernameChanges[storedUsername] = currentUsername
+				live[currentUsername] = true
+			} else if storedUsername != "" {
+				live[storedUsername] = true
+			} else {
+				live[currentUsername] = true
+			}
 		}
 	}
 
@@ -1362,7 +1437,7 @@ func (m *Manager) isChannelFollowersOnly(broadcasterID, clientID, oauthToken str
 	req.Header.Set("Client-ID", clientID)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return false
@@ -1411,7 +1486,7 @@ func (m *Manager) isChannelLive(channel string) bool {
 	req.Header.Set("Client-ID", clientID)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error checking live status for %s: %v", channel, err)
@@ -1470,7 +1545,7 @@ func (m *Manager) isBotFollowing(channel string) bool {
 	req.Header.Set("Client-ID", clientID)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error checking follow status for %s: %v", channel, err)

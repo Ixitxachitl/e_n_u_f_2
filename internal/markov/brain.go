@@ -229,6 +229,11 @@ func (b *Brain) ProcessMessageWithInfo(message, username, botUsername string, gl
 				result.FailureReason = "blacklisted_word"
 				continue
 			}
+			// Don't let the bot accidentally invoke chat commands
+			if strings.HasPrefix(strings.TrimSpace(response), "!") {
+				result.FailureReason = "starts_with_command"
+				continue
+			}
 			// Success!
 			result.Success = true
 			result.Response = response
@@ -621,14 +626,20 @@ func isEmoji(r rune) bool {
 		(r >= 0x200D && r <= 0x200D) // Zero width joiner (used in compound emoji)
 }
 
-// containsNonASCII checks if a string contains any non-ASCII characters (excluding emoji)
+// containsNonASCII checks if a string contains any non-ASCII characters (excluding emoji and Portuguese accents)
 func containsNonASCII(s string) bool {
 	for _, r := range s {
-		if r > 127 && !isEmoji(r) {
+		if r > 127 && !isEmoji(r) && !isPortugueseAccent(r) {
 			return true
 		}
 	}
 	return false
+}
+
+// isPortugueseAccent checks if a rune is an accented character common in Portuguese
+// (covers the Latin-1 Supplement block U+00C0–U+00FF, used by Portuguese and other Western European languages)
+func isPortugueseAccent(r rune) bool {
+	return r >= 0x00C0 && r <= 0x00FF
 }
 
 // normalizeASCII converts common Unicode characters to their ASCII equivalents
@@ -884,8 +895,8 @@ func (b *Brain) containsBlacklistedWord(message string) bool {
 
 func isMostlyEnglish(text string) bool {
 	for _, r := range text {
-		// Allow ASCII characters and emoji, reject everything else
-		if r > 127 && !isEmoji(r) {
+		// Allow ASCII characters, emoji, and Portuguese/Latin accented characters
+		if r > 127 && !isEmoji(r) && !isPortugueseAccent(r) {
 			return false
 		}
 	}
