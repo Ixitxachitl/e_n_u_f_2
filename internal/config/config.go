@@ -51,6 +51,49 @@ func (c *Config) SetOAuthToken(token string) error {
 	return c.setValue("oauth_token", token)
 }
 
+// GetClientSecret returns the Twitch app client secret (required for refresh-token flow)
+func (c *Config) GetClientSecret() string {
+	return c.getValue("client_secret")
+}
+
+// SetClientSecret stores the Twitch app client secret
+func (c *Config) SetClientSecret(secret string) error {
+	return c.setValue("client_secret", secret)
+}
+
+// GetRefreshToken returns the stored refresh token (empty if implicit-flow auth was used)
+func (c *Config) GetRefreshToken() string {
+	return c.getValue("refresh_token")
+}
+
+// SetRefreshToken stores the refresh token
+func (c *Config) SetRefreshToken(token string) error {
+	return c.setValue("refresh_token", token)
+}
+
+// GetTokenExpiresAt returns the unix timestamp when the current access token expires
+// (0 if unknown — e.g. implicit-flow tokens).
+func (c *Config) GetTokenExpiresAt() int64 {
+	val := c.getValue("token_expires_at")
+	if val == "" {
+		return 0
+	}
+	n, _ := strconv.ParseInt(val, 10, 64)
+	return n
+}
+
+// SetTokenExpiresAt stores the unix timestamp when the current access token expires
+func (c *Config) SetTokenExpiresAt(unix int64) error {
+	return c.setValue("token_expires_at", strconv.FormatInt(unix, 10))
+}
+
+// ClearTokenData wipes all token-related fields. Use on logout or when refresh fails irrecoverably.
+func (c *Config) ClearTokenData() {
+	c.setValue("oauth_token", "")
+	c.setValue("refresh_token", "")
+	c.setValue("token_expires_at", "")
+}
+
 // GetBotUsername returns the bot username
 func (c *Config) GetBotUsername() string {
 	return c.getValue("bot_username")

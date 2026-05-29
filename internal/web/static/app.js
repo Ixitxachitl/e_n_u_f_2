@@ -348,12 +348,19 @@ function cacheElements() {
     elements.newBlacklistWord = document.getElementById('new-blacklist-word');
     elements.newIgnoredUser = document.getElementById('new-ignored-user');
     elements.clientId = document.getElementById('client-id');
+    elements.refreshTokenBtn = document.getElementById('refresh-token-btn');
+    elements.tokenExpiryInfo = document.getElementById('token-expiry-info');
+    elements.deviceFlowView = document.getElementById('device-flow-view');
+    elements.deviceFlowCode = document.getElementById('device-flow-code');
+    elements.deviceFlowLink = document.getElementById('device-flow-link');
+    elements.deviceFlowStatus = document.getElementById('device-flow-status');
+    elements.deviceFlowCancel = document.getElementById('device-flow-cancel');
     elements.loggedOutView = document.getElementById('logged-out-view');
     elements.loggedInView = document.getElementById('logged-in-view');
     elements.loggedUsername = document.getElementById('logged-username');
     elements.botAvatar = document.getElementById('bot-avatar');
     elements.twitchLoginBtn = document.getElementById('twitch-login-btn');
-    elements.redirectUrl = document.getElementById('redirect-url');
+    elements.redirectUrl = null;
     elements.dbTransitions = document.getElementById('db-transitions');
     elements.dbChannels = document.getElementById('db-channels');
     elements.dbBlacklisted = document.getElementById('db-blacklisted');
@@ -401,15 +408,35 @@ function setupEventListeners() {
         if (e.key === 'Enter') addChannel();
     });
 
-    // OAuth login
-    elements.twitchLoginBtn.addEventListener('click', async () => {
-        const clientId = elements.clientId.value.trim();
-        if (clientId) {
-            await api.put('/api/config', { client_id: clientId });
-        }
-        window.location.href = '/auth/twitch';
-    });
+    // OAuth login — Device Code Flow
+    elements.twitchLoginBtn.addEventListener('click', startDeviceFlow);
+    if (elements.deviceFlowCancel) {
+        elements.deviceFlowCancel.addEventListener('click', cancelDeviceFlow);
+    }
     document.getElementById('logout-btn').addEventListener('click', logout);
+
+    // Manual token refresh
+    if (elements.refreshTokenBtn) {
+        elements.refreshTokenBtn.addEventListener('click', async () => {
+            elements.refreshTokenBtn.disabled = true;
+            const original = elements.refreshTokenBtn.textContent;
+            elements.refreshTokenBtn.textContent = 'Refreshing…';
+            try {
+                const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' });
+                if (!res.ok) {
+                    const body = await res.json().catch(() => ({}));
+                    alert('Refresh failed: ' + (body.error || res.statusText));
+                } else {
+                    await loadStatus();
+                }
+            } catch (err) {
+                alert('Refresh failed: ' + err.message);
+            } finally {
+                elements.refreshTokenBtn.textContent = original;
+                elements.refreshTokenBtn.disabled = false;
+            }
+        });
+    }
     
     // Client ID input enables/disables login button
     elements.clientId.addEventListener('input', updateLoginButtonState);
@@ -664,6 +691,17 @@ async function loadStatus() {
     if (status.configured) {
         elements.configStatus.textContent = 'Configured';
         elements.configStatus.style.color = 'var(--success)';
+        // Clear the pre-login "Setup Required" warning. Restore the indicator
+        // to whatever the WebSocket connection state currently is.
+        if (elements.statusIndicator.textContent === 'Setup Required') {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                elements.statusIndicator.textContent = 'Connected';
+                elements.statusIndicator.className = 'status-badge connected';
+            } else {
+                elements.statusIndicator.textContent = 'Disconnected';
+                elements.statusIndicator.className = 'status-badge disconnected';
+            }
+        }
     } else {
         elements.configStatus.textContent = 'Not Configured';
         elements.configStatus.style.color = 'var(--warning)';
@@ -826,11 +864,12 @@ async function loadConfig() {
     elements.defaultTimerValue.textContent = defaultTimerMin;
     
     // Set redirect URL - use internal IP if available for clarity
+    // (device-code flow doesn't use one, but keep the variable for compat with older UIs)
     const protocol = window.location.protocol;
     const port = config.web_port || window.location.port;
     const host = config.local_ip || window.location.hostname;
     const redirectUrl = `${protocol}//${host}:${port}/auth/callback`;
-    elements.redirectUrl.textContent = redirectUrl;
+    if (elements.redirectUrl) elements.redirectUrl.textContent = redirectUrl;
     
     // Store bot username globally for activity log highlighting
     botUsername = config.bot_username || '';
@@ -840,13 +879,40 @@ async function loadConfig() {
         elements.loggedOutView.style.display = 'none';
         elements.loggedInView.style.display = 'block';
         elements.loggedUsername.textContent = config.bot_username;
-        
+
         // Set bot avatar
         if (config.bot_profile_image) {
             elements.botAvatar.src = config.bot_profile_image;
             elements.botAvatar.style.display = 'inline-block';
         } else {
             elements.botAvatar.style.display = 'none';
+        }
+
+        // Token expiry / refresh UI
+        if (elements.tokenExpiryInfo && elements.refreshTokenBtn) {
+            const expiresAt = config.token_expires_at || 0;
+            const canRefresh = !!config.refresh_token_set;
+            if (expiresAt > 0) {
+                const remainingSec = expiresAt - Math.floor(Date.now() / 1000);
+                if (remainingSec > 0) {
+                    const days = Math.floor(remainingSec / 86400);
+                    const hours = Math.floor((remainingSec % 86400) / 3600);
+                    const mins = Math.floor((remainingSec % 3600) / 60);
+                    let when = '';
+                    if (days > 0) when = `${days}d ${hours}h`;
+                    else if (hours > 0) when = `${hours}h ${mins}m`;
+                    else when = `${mins}m`;
+                    elements.tokenExpiryInfo.textContent = canRefresh
+                        ? `Token expires in ${when} — will auto-refresh.`
+                        : `Token expires in ${when}. Auto-refresh disabled (re-login to enable).`;
+                } else {
+                    elements.tokenExpiryInfo.textContent = 'Token is expired.';
+                }
+            } else {
+                elements.tokenExpiryInfo.textContent = 'Token expiry unknown (legacy login). Re-login to enable auto-refresh.';
+            }
+            elements.tokenExpiryInfo.style.display = 'block';
+            elements.refreshTokenBtn.style.display = canRefresh ? 'inline-block' : 'none';
         }
     } else {
         elements.loggedOutView.style.display = 'block';
@@ -885,6 +951,113 @@ async function logout() {
     elements.loggedOutView.style.display = 'block';
     elements.loggedInView.style.display = 'none';
     loadStatus();
+}
+
+// --- Device Code Flow -------------------------------------------------------
+
+let deviceFlowTimer = null;
+
+async function startDeviceFlow() {
+    const clientId = elements.clientId.value.trim();
+    if (!clientId) {
+        alert('Enter a Client ID first.');
+        return;
+    }
+    localStorage.setItem('lastClientId', clientId);
+
+    elements.twitchLoginBtn.disabled = true;
+    try {
+        const res = await fetch('/api/auth/device/start', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: clientId }),
+        });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.error || res.statusText);
+        }
+        const data = await res.json();
+
+        elements.deviceFlowCode.textContent = data.user_code;
+        elements.deviceFlowLink.href = data.verification_uri;
+        elements.deviceFlowLink.textContent = data.verification_uri;
+        elements.deviceFlowStatus.textContent = 'Waiting for you to authorize on Twitch…';
+        elements.deviceFlowView.style.display = 'block';
+
+        const intervalMs = Math.max(1, (data.interval || 5)) * 1000;
+        if (deviceFlowTimer) clearInterval(deviceFlowTimer);
+        deviceFlowTimer = setInterval(pollDeviceFlow, intervalMs);
+
+        // Try opening Twitch in a new tab automatically.
+        try { window.open(data.verification_uri, '_blank', 'noopener'); } catch (_) { /* ignore */ }
+    } catch (err) {
+        alert('Could not start Twitch login: ' + err.message);
+        elements.twitchLoginBtn.disabled = false;
+    }
+}
+
+async function pollDeviceFlow() {
+    try {
+        const res = await fetch('/api/auth/device/poll', {
+            method: 'POST',
+            credentials: 'same-origin',
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            stopDeviceFlow('Login failed: ' + (data.error || res.statusText));
+            return;
+        }
+        switch (data.status) {
+            case 'authorized':
+                // Switch to logged-in view immediately so the user doesn't
+                // spam-click Login (which would re-authorize and invalidate
+                // the token we just got).
+                if (deviceFlowTimer) { clearInterval(deviceFlowTimer); deviceFlowTimer = null; }
+                elements.deviceFlowView.style.display = 'none';
+                elements.loggedOutView.style.display = 'none';
+                elements.loggedInView.style.display = 'block';
+                if (data.username) {
+                    elements.loggedUsername.textContent = data.username;
+                }
+                // Refresh all dashboard data — "Setup Required" indicators,
+                // channel list, brain stats, etc. all flip to the configured state.
+                await loadInitialData();
+                break;
+            case 'expired':
+                stopDeviceFlow('Code expired. Please try again.');
+                break;
+            case 'denied':
+                stopDeviceFlow('Authorization denied.');
+                break;
+            case 'error':
+                stopDeviceFlow('Error: ' + (data.error || 'unknown'));
+                break;
+            case 'pending':
+            default:
+                // keep polling
+                break;
+        }
+    } catch (err) {
+        // network blip — keep polling
+    }
+}
+
+async function cancelDeviceFlow() {
+    if (deviceFlowTimer) { clearInterval(deviceFlowTimer); deviceFlowTimer = null; }
+    elements.deviceFlowView.style.display = 'none';
+    elements.twitchLoginBtn.disabled = false;
+    try {
+        await fetch('/api/auth/device/cancel', { method: 'POST', credentials: 'same-origin' });
+    } catch (_) { /* ignore */ }
+}
+
+function stopDeviceFlow(message) {
+    if (deviceFlowTimer) { clearInterval(deviceFlowTimer); deviceFlowTimer = null; }
+    elements.deviceFlowStatus.textContent = message;
+    elements.twitchLoginBtn.disabled = false;
+    // Hide the device-flow view after a moment.
+    setTimeout(() => { elements.deviceFlowView.style.display = 'none'; }, 2500);
 }
 
 async function loadChannels() {

@@ -63,6 +63,11 @@ func (m *Manager) Start() error {
 	m.running = true
 	m.mu.Unlock()
 
+	// Refresh the OAuth token up-front if it's expired or close to expiring,
+	// so we don't try to connect with a dead token. Best-effort: if refresh
+	// isn't configured (no client_secret / refresh_token) we just continue.
+	m.ensureFreshToken()
+
 	// Always join the bot's own channel first (for !join/!leave commands)
 	botUsername := m.cfg.GetBotUsername()
 	if botUsername != "" {
@@ -76,6 +81,9 @@ func (m *Manager) Start() error {
 
 	// Start the inactivity timer monitor (checks every 30 seconds)
 	go m.monitorInactivityTimers()
+
+	// Start the OAuth token refresh monitor
+	go m.monitorTokenRefresh()
 
 	// Do an immediate check for live channels
 	m.updateLiveConnections()
@@ -139,6 +147,20 @@ func (m *Manager) JoinChannel(channel string) error {
 
 	// Set global generator for combined brain generation
 	client.SetGlobalGenerator(m.brainMgr.GenerateGlobal)
+
+	// Restore any unexpired timeout state from a previous session. Without this,
+	// every reconnect would create a fresh client with timeoutUntil=0, causing
+	// the bot to resume generating messages even though Twitch still has it timed
+	// out (messages would be silently dropped until a msg_timedout NOTICE arrives).
+	// Safe to call SetTimeoutUntil here — Connect() has not been called yet, so
+	// nothing else holds the client's mutex.
+	if expiry, ok := m.timedOut[channel]; ok {
+		if time.Now().Before(expiry) {
+			client.SetTimeoutUntil(expiry)
+		} else {
+			delete(m.timedOut, channel)
+		}
+	}
 
 	m.clients[channel] = client
 	m.msgCounts[channel] = 0
@@ -317,16 +339,12 @@ func (m *Manager) onMessage(channel, username, message, color, emotes, badges st
 func (m *Manager) onConnect(channel string) {
 	channel = strings.ToLower(channel)
 
-	// Clear any stale timeout state from a previous session. If the bot was
-	// timed out when it disconnected, a mod may have lifted it while offline.
-	// We'll re-detect an active timeout via the msg_timedout NOTICE on first send.
-	// NOTE: do NOT call client.SetTimeoutUntil here — ConnectWithRetry holds
-	// c.mu when it calls onConnect, so re-entering the client mutex deadlocks.
-	// The client is always freshly created via NewClient, so timeoutUntil is
-	// already zero.
-	m.mu.Lock()
-	delete(m.timedOut, channel)
-	m.mu.Unlock()
+	// NOTE: we intentionally do NOT clear m.timedOut[channel] here. The new
+	// client was already seeded with the unexpired timeout in JoinChannel so
+	// that we don't generate messages during the timeout window. If a mod
+	// lifted the timeout while we were offline we'll find out either via a
+	// CLEARCHAT (no ban-duration) or by waiting out the local expiry — both
+	// strictly safer than spamming messages Twitch will drop.
 
 	m.mu.RLock()
 	handler := m.eventHandler
@@ -851,6 +869,119 @@ func (m *Manager) handleUsernameChange(oldName, newName, userID string) {
 	m.cfg.SetUserIDMapping(userID, newName)
 
 	log.Printf("Successfully migrated channel data from %s to %s", oldName, newName)
+}
+
+// ensureFreshToken refreshes the access token now if it is expired or close to
+// expiring. Safe to call when refresh isn't configured — it simply no-ops with
+// a log so the bot continues using whatever token is stored.
+func (m *Manager) ensureFreshToken() {
+	expiresAt := m.cfg.GetTokenExpiresAt()
+	now := time.Now().Unix()
+
+	// expiresAt == 0 means we don't know (e.g. implicit-flow token from the old
+	// auth path). Try a validate call to populate it; ignore failures.
+	if expiresAt == 0 {
+		if _, err := ValidateToken(m.cfg); err != nil {
+			log.Printf("Token validate failed (continuing): %v", err)
+			return
+		}
+		expiresAt = m.cfg.GetTokenExpiresAt()
+		if expiresAt == 0 {
+			return
+		}
+	}
+
+	remaining := expiresAt - now
+	if remaining > refreshThresholdSecs {
+		return
+	}
+
+	if m.cfg.GetRefreshToken() == "" || m.cfg.GetClientSecret() == "" {
+		log.Printf("OAuth token expires in %ds but auto-refresh isn't configured (need client_secret + refresh_token). Re-authorize via the web UI.", remaining)
+		return
+	}
+
+	log.Printf("OAuth token expires in %ds — refreshing now", remaining)
+	if err := RefreshAccessToken(m.cfg); err != nil {
+		log.Printf("Token refresh failed: %v", err)
+	}
+}
+
+// monitorTokenRefresh periodically checks the OAuth token's remaining lifetime
+// and refreshes it well before expiry. If a refresh actually replaced the token,
+// all IRC clients are reconnected so they pick up the new token.
+func (m *Manager) monitorTokenRefresh() {
+	ticker := time.NewTicker(refreshCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopChan:
+			return
+		case <-ticker.C:
+			oldToken := m.cfg.GetOAuthToken()
+			m.ensureFreshToken()
+			if newToken := m.cfg.GetOAuthToken(); newToken != "" && newToken != oldToken {
+				log.Printf("OAuth token was refreshed — reconnecting all IRC clients")
+				m.reconnectAllForTokenRefresh()
+			}
+		}
+	}
+}
+
+// RefreshTokenNow performs an immediate refresh and, on success, reconnects
+// all IRC clients so they pick up the new token.
+func (m *Manager) RefreshTokenNow() error {
+	oldToken := m.cfg.GetOAuthToken()
+	if err := RefreshAccessToken(m.cfg); err != nil {
+		return err
+	}
+	if newToken := m.cfg.GetOAuthToken(); newToken != "" && newToken != oldToken {
+		m.reconnectAllForTokenRefresh()
+	}
+	return nil
+}
+
+// ReconnectAllForNewToken tears down every IRC client and rejoins so they
+// re-authenticate with whatever access token is currently stored in cfg.
+// Call this after a successful login (device flow) or any out-of-band token
+// change so we don't wait for Twitch to forcibly drop the stale connections.
+func (m *Manager) ReconnectAllForNewToken() {
+	m.reconnectAllForTokenRefresh()
+}
+
+// reconnectAllForTokenRefresh tears down every active IRC connection and rejoins
+// so the reconnect logic re-authenticates with the freshly stored access token.
+// Uses the same lock-free close + cleanup pattern as reconnectChannel.
+func (m *Manager) reconnectAllForTokenRefresh() {
+	m.mu.Lock()
+	channels := make([]string, 0, len(m.clients))
+	for ch := range m.clients {
+		channels = append(channels, ch)
+	}
+	m.mu.Unlock()
+
+	for _, channel := range channels {
+		m.mu.Lock()
+		oldClient, exists := m.clients[channel]
+		if exists {
+			delete(m.clients, channel)
+			delete(m.msgCounts, channel)
+		}
+		m.mu.Unlock()
+
+		if exists {
+			oldClient.ForceClose()
+			oldClient.mu.Lock()
+			oldClient.running = false
+			oldClient.conn = nil
+			oldClient.mu.Unlock()
+		}
+
+		if err := m.JoinChannel(channel); err != nil {
+			log.Printf("[%s] Failed to reconnect after token refresh: %v", channel, err)
+		}
+	}
 }
 
 // monitorLiveChannels periodically checks which channels are live and joins/leaves accordingly

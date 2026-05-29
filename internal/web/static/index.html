@@ -128,9 +128,8 @@
                 <h2>Twitch Login</h2>
                 <div id="login-section">
                     <div id="logged-out-view">
-                        <p>Enter your Twitch Application Client ID and click "Login with Twitch" to authenticate.</p>
-                        <p class="hint">Get a Client ID from <a href="https://dev.twitch.tv/console/apps" target="_blank">dev.twitch.tv/console/apps</a></p>
-                        <p class="hint">Set the redirect URL to: <code id="redirect-url">http://localhost:24601/auth/callback</code></p>
+                        <p>Enter your Twitch Application Client ID and click "Login with Twitch".</p>
+                        <p class="hint">Get a Client ID from <a href="https://dev.twitch.tv/console/apps" target="_blank">dev.twitch.tv/console/apps</a> (any "Client Type" works — no Redirect URL or Secret needed).</p>
                         <div class="form-group">
                             <label for="client-id">Client ID</label>
                             <input type="text" id="client-id" placeholder="Your Twitch App Client ID">
@@ -139,12 +138,25 @@
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
                             Login with Twitch
                         </button>
+
+                        <!-- Device Code Flow UI (shown after clicking Login) -->
+                        <div id="device-flow-view" style="display: none; margin-top: 16px;">
+                            <p>1. Open <a id="device-flow-link" href="#" target="_blank" rel="noopener">this Twitch page</a></p>
+                            <p>2. Enter this code:</p>
+                            <div class="form-group">
+                                <code id="device-flow-code" style="display: inline-block; font-size: 1.6em; letter-spacing: 0.15em; padding: 8px 16px; background: #1f1f23; border-radius: 6px;">--------</code>
+                            </div>
+                            <p class="hint" id="device-flow-status">Waiting for you to authorize on Twitch…</p>
+                            <button id="device-flow-cancel" class="btn">Cancel</button>
+                        </div>
                     </div>
                     <div id="logged-in-view" style="display: none;">
                         <div class="login-status">
                             <img id="bot-avatar" src="" class="bot-avatar" alt="Bot avatar" style="display: none;">
                             <span>Logged in as: <strong id="logged-username">-</strong></span>
                         </div>
+                        <p class="hint" id="token-expiry-info" style="display: none;"></p>
+                        <button id="refresh-token-btn" class="btn" style="display: none;">Refresh token now</button>
                         <button id="logout-btn" class="btn danger">Logout</button>
                     </div>
                 </div>

@@ -138,10 +138,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("/api/auth/change-password", s.authMiddleware(s.handleAuthChangePassword))
 
-	// OAuth routes (protected)
-	mux.HandleFunc("/auth/twitch", s.authMiddleware(s.handleTwitchAuth))
-	mux.HandleFunc("/auth/callback", s.handleTwitchCallback) // Callback must be accessible
-	mux.HandleFunc("/auth/token", s.authMiddleware(s.handleTokenExchange))
+	// OAuth routes (Device Code Flow — no redirect, no client secret).
+	mux.HandleFunc("/api/auth/device/start", s.authMiddleware(s.handleDeviceFlowStart))
+	mux.HandleFunc("/api/auth/device/poll", s.authMiddleware(s.handleDeviceFlowPoll))
+	mux.HandleFunc("/api/auth/device/cancel", s.authMiddleware(s.handleDeviceFlowCancel))
+	mux.HandleFunc("/api/auth/refresh", s.authMiddleware(s.handleTokenRefresh))
 
 	// API routes (protected)
 	mux.HandleFunc("/api/status", s.authMiddleware(s.handleStatus))
@@ -282,174 +283,97 @@ func (s *Server) Stop() {
 	}
 }
 
-// handleTwitchAuth redirects to Twitch OAuth
-func (s *Server) handleTwitchAuth(w http.ResponseWriter, r *http.Request) {
-	clientID := s.cfg.GetClientID()
-	if clientID == "" {
-		httpError(w, "Client ID not configured", http.StatusBadRequest)
-		return
-	}
-
-	// Build redirect URI from request
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	redirectURI := fmt.Sprintf("%s://%s/auth/callback", scheme, r.Host)
-
-	// Build Twitch OAuth URL with force_verify
-	authURL := fmt.Sprintf(
-		"https://id.twitch.tv/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=token&scope=chat:read+chat:edit+user:manage:whispers+user:read:follows&force_verify=true",
-		clientID,
-		redirectURI,
-	)
-
-	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
-}
-
-// handleTwitchCallback serves the callback page that extracts the token from URL fragment
-func (s *Server) handleTwitchCallback(w http.ResponseWriter, r *http.Request) {
-	// The token is in the URL fragment, so we need to use JavaScript to extract it
-	html := `<!DOCTYPE html>
-<html>
-<head>
-    <title>Twitch Login</title>
-    <style>
-        body { background: #0e0e10; color: #efeff1; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .container { text-align: center; }
-        .spinner { border: 4px solid #1f1f23; border-top: 4px solid #9147ff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .error { color: #f44336; }
-        .success { color: #00c853; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="spinner" id="spinner"></div>
-        <p id="status">Processing login...</p>
-    </div>
-    <script>
-        const hash = window.location.hash.substring(1);
-        const params = new URLSearchParams(hash);
-        const accessToken = params.get('access_token');
-        const error = params.get('error');
-        const errorDesc = params.get('error_description');
-        
-        const statusEl = document.getElementById('status');
-        const spinnerEl = document.getElementById('spinner');
-        
-        if (error) {
-            spinnerEl.style.display = 'none';
-            statusEl.className = 'error';
-            statusEl.textContent = 'Login failed: ' + (errorDesc || error);
-            setTimeout(() => window.location.href = '/', 3000);
-        } else if (accessToken) {
-            fetch('/auth/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ access_token: accessToken })
-            })
-            .then(res => res.json())
-            .then(data => {
-                spinnerEl.style.display = 'none';
-                if (data.error) {
-                    statusEl.className = 'error';
-                    statusEl.textContent = 'Error: ' + data.error;
-                } else {
-                    statusEl.className = 'success';
-                    statusEl.textContent = 'Logged in as ' + data.username + '! Redirecting...';
-                }
-                setTimeout(() => window.location.href = '/', 2000);
-            })
-            .catch(err => {
-                spinnerEl.style.display = 'none';
-                statusEl.className = 'error';
-                statusEl.textContent = 'Error: ' + err.message;
-                setTimeout(() => window.location.href = '/', 3000);
-            });
-        } else {
-            spinnerEl.style.display = 'none';
-            statusEl.className = 'error';
-            statusEl.textContent = 'No token received';
-            setTimeout(() => window.location.href = '/', 3000);
-        }
-    </script>
-</body>
-</html>`
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(html))
-}
-
-// handleTokenExchange receives the token from the callback page and validates it
-func (s *Server) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
+// handleDeviceFlowStart kicks off Twitch's Device Code Flow and returns the
+// user-facing code + verification URL. The client should then poll
+// /api/auth/device/poll at the recommended interval.
+func (s *Server) handleDeviceFlowStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpError(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-
-	if req.AccessToken == "" {
-		httpError(w, "No token provided", http.StatusBadRequest)
-		return
+	// Allow client_id to be set in the same request so first-time users don't
+	// need a second round-trip.
+	if r.Body != nil {
+		var body struct {
+			ClientID string `json:"client_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.ClientID != "" {
+			s.cfg.SetClientID(body.ClientID)
+		}
 	}
 
-	// Validate token and get user info from Twitch
-	client := &http.Client{Timeout: 30 * time.Second}
-	httpReq, _ := http.NewRequest("GET", "https://api.twitch.tv/helix/users", nil)
-	httpReq.Header.Set("Authorization", "Bearer "+req.AccessToken)
-	httpReq.Header.Set("Client-Id", s.cfg.GetClientID())
-
-	resp, err := client.Do(httpReq)
+	state, err := twitch.StartDeviceFlow(s.cfg)
 	if err != nil {
-		httpError(w, "Failed to validate token", http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("Twitch API error: %s", string(body))
-		httpError(w, "Invalid token", http.StatusUnauthorized)
+		log.Printf("Device flow start failed: %v", err)
+		httpError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	var twitchResp struct {
-		Data []struct {
-			ID    string `json:"id"`
-			Login string `json:"login"`
-			Name  string `json:"display_name"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&twitchResp); err != nil {
-		httpError(w, "Failed to parse Twitch response", http.StatusInternalServerError)
-		return
-	}
-
-	if len(twitchResp.Data) == 0 {
-		httpError(w, "No user data returned", http.StatusInternalServerError)
-		return
-	}
-
-	user := twitchResp.Data[0]
-
-	// Save the token and username
-	s.cfg.SetOAuthToken("oauth:" + req.AccessToken)
-	s.cfg.SetBotUsername(user.Login)
-
-	log.Printf("Logged in as: %s", user.Login)
-
-	jsonResponse(w, map[string]string{
-		"status":   "success",
-		"username": user.Login,
-		"name":     user.Name,
+	jsonResponse(w, map[string]interface{}{
+		"user_code":        state.UserCode,
+		"verification_uri": state.VerificationURI,
+		"interval":         state.Interval,
+		"expires_at":       state.ExpiresAt.Unix(),
 	})
+}
+
+// handleDeviceFlowPoll polls Twitch once for the device-flow token. On
+// "authorized" it also looks up and stores the bot's username.
+func (s *Server) handleDeviceFlowPoll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	status, pollErr := twitch.PollDeviceFlow(s.cfg)
+	resp := map[string]interface{}{"status": status}
+
+	switch status {
+	case "authorized":
+		// Look up bot username from the freshly stored token
+		token := strings.TrimPrefix(s.cfg.GetOAuthToken(), "oauth:")
+		hc := &http.Client{Timeout: 15 * time.Second}
+		req, _ := http.NewRequest("GET", "https://api.twitch.tv/helix/users", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Client-Id", s.cfg.GetClientID())
+		if hr, err := hc.Do(req); err == nil {
+			defer hr.Body.Close()
+			if hr.StatusCode == http.StatusOK {
+				var tr struct {
+					Data []struct {
+						Login string `json:"login"`
+					} `json:"data"`
+				}
+				if err := json.NewDecoder(hr.Body).Decode(&tr); err == nil && len(tr.Data) > 0 {
+					s.cfg.SetBotUsername(tr.Data[0].Login)
+					resp["username"] = tr.Data[0].Login
+					log.Printf("Logged in via device flow as: %s", tr.Data[0].Login)
+				}
+			}
+		}
+		// Reconnect IRC immediately with the new token. Twitch invalidates
+		// the previous user-token whenever a new one is issued, so any open
+		// chat sockets are about to be dropped — beat Twitch to it so the
+		// user doesn't see "Login authentication failed" notices.
+		go s.manager.ReconnectAllForNewToken()
+	case "expired", "denied", "error":
+		if pollErr != nil {
+			resp["error"] = pollErr.Error()
+		}
+	}
+
+	jsonResponse(w, resp)
+}
+
+// handleDeviceFlowCancel drops any in-progress device flow.
+func (s *Server) handleDeviceFlowCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	twitch.CancelDeviceFlow()
+	jsonResponse(w, map[string]string{"status": "cancelled"})
 }
 
 // handleLogout clears the OAuth token and cleans up the bot's brain
@@ -469,10 +393,30 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.cfg.SetOAuthToken("")
+	s.cfg.ClearTokenData()
 	s.cfg.SetBotUsername("")
 
 	jsonResponse(w, map[string]string{"status": "logged_out"})
+}
+
+// handleTokenRefresh manually triggers an OAuth token refresh. Requires the
+// authorization-code flow to have been used (so a refresh_token is stored).
+func (s *Server) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := s.manager.RefreshTokenNow(); err != nil {
+		log.Printf("Manual token refresh failed: %v", err)
+		httpError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{
+		"status":           "refreshed",
+		"token_expires_at": s.cfg.GetTokenExpiresAt(),
+	})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -542,6 +486,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"bot_username":                s.cfg.GetBotUsername(),
 			"oauth_token_set":             tokenSet,
 			"client_id_set":               clientIDSet,
+			"client_secret_set":           s.cfg.GetClientSecret() != "",
+			"refresh_token_set":           s.cfg.GetRefreshToken() != "",
+			"token_expires_at":            s.cfg.GetTokenExpiresAt(),
 			"message_interval":            s.cfg.GetMessageInterval(),
 			"web_port":                    s.cfg.GetWebPort(),
 			"bot_profile_image":           botProfileImage,
@@ -559,6 +506,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		var req struct {
 			ClientID             *string `json:"client_id"`
+			ClientSecret         *string `json:"client_secret"`
 			MessageInterval      *int    `json:"message_interval"`
 			AllowSelfJoin        *bool   `json:"allow_self_join"`
 			DefaultBrainMode     *string `json:"default_brain_mode"`
@@ -575,6 +523,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 		if req.ClientID != nil {
 			s.cfg.SetClientID(*req.ClientID)
+		}
+		if req.ClientSecret != nil {
+			s.cfg.SetClientSecret(*req.ClientSecret)
 		}
 		if req.MessageInterval != nil {
 			s.cfg.SetMessageInterval(*req.MessageInterval)
