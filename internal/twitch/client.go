@@ -206,10 +206,10 @@ func (c *Client) Disconnect() {
 
 	c.running = false
 	if c.conn != nil {
-		c.sendRaw("PART #" + c.channel)
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 	}
+	c.writer = nil
 }
 
 // ForceClose closes the underlying connection without acquiring c.mu.
@@ -267,7 +267,8 @@ func (c *Client) sendRaw(message string) {
 	if c.conn != nil {
 		_ = c.conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
 	}
-	c.writer.WriteString(message + "\r\n")
+	c.writer.WriteString(message)
+	c.writer.WriteString("\r\n")
 	c.writer.Flush()
 }
 
@@ -279,7 +280,10 @@ func (c *Client) sendRawErr(message string) error {
 	if c.conn != nil {
 		_ = c.conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
 	}
-	if _, err := c.writer.WriteString(message + "\r\n"); err != nil {
+	if _, err := c.writer.WriteString(message); err != nil {
+		return err
+	}
+	if _, err := c.writer.WriteString("\r\n"); err != nil {
 		return err
 	}
 	return c.writer.Flush()
@@ -519,10 +523,12 @@ func (c *Client) handleMessage(raw string) {
 
 	case "RECONNECT":
 		log.Printf("[%s] Received RECONNECT, reconnecting...", c.channel)
-		c.Disconnect()
-		time.Sleep(time.Second)
-		c.Connect()
-		go c.Run()
+		// Let Manager.onDisconnect own all reconnect behavior. Reconnecting here
+		// creates competing Run loops and stale readers.
+		c.mu.Lock()
+		c.running = false
+		c.mu.Unlock()
+		c.ForceClose()
 	}
 }
 
