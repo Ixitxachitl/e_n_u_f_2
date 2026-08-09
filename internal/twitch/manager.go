@@ -1,6 +1,7 @@
 package twitch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,10 +40,13 @@ type Manager struct {
 	eventHandler  func(event string, data interface{})
 	stopChan      chan struct{}
 	reconnecting  map[string]bool
+	ctx           context.Context    // cancelled on Stop() to unblock all pending dials
+	cancel        context.CancelFunc // cancels ctx
 }
 
 // NewManager creates a new Twitch connection manager
 func NewManager(cfg *config.Config) *Manager {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		cfg:           cfg,
 		brainMgr:      markov.NewManager(cfg),
@@ -54,6 +58,8 @@ func NewManager(cfg *config.Config) *Manager {
 		timedOut:      make(map[string]time.Time),
 		reconnecting:  make(map[string]bool),
 		stopChan:      make(chan struct{}),
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 }
 
@@ -102,6 +108,11 @@ func (m *Manager) Stop() {
 	}
 	m.mu.Unlock()
 
+	// Cancel the shared context first. This unblocks any goroutine currently
+	// inside ConnectWithRetry (dial or backoff sleep) so that the c.mu lock is
+	// released before we try to acquire it in Disconnect() below.
+	m.cancel()
+
 	for _, client := range clients {
 		client.Disconnect()
 	}
@@ -131,7 +142,7 @@ func (m *Manager) JoinChannel(channel string) error {
 	if !isBotChannel {
 		brain = m.brainMgr.GetBrain(channel)
 	}
-	client := NewClient(channel, m.cfg, brain)
+	client := NewClient(channel, m.cfg, brain, m.ctx)
 
 	client.SetCallbacks(
 		m.onMessage,
@@ -961,27 +972,36 @@ func (m *Manager) reconnectAllForTokenRefresh() {
 	}
 	m.mu.Unlock()
 
+	// Reconnect all channels concurrently so a single slow/failed connection
+	// does not block all others from picking up the new token.
+	var wg sync.WaitGroup
 	for _, channel := range channels {
-		m.mu.Lock()
-		oldClient, exists := m.clients[channel]
-		if exists {
-			delete(m.clients, channel)
-			delete(m.msgCounts, channel)
-		}
-		m.mu.Unlock()
+		wg.Add(1)
+		go func(ch string) {
+			defer wg.Done()
 
-		if exists {
-			oldClient.ForceClose()
-			oldClient.mu.Lock()
-			oldClient.running = false
-			oldClient.conn = nil
-			oldClient.mu.Unlock()
-		}
+			m.mu.Lock()
+			oldClient, exists := m.clients[ch]
+			if exists {
+				delete(m.clients, ch)
+				delete(m.msgCounts, ch)
+			}
+			m.mu.Unlock()
 
-		if err := m.JoinChannel(channel); err != nil {
-			log.Printf("[%s] Failed to reconnect after token refresh: %v", channel, err)
-		}
+			if exists {
+				oldClient.ForceClose()
+				oldClient.mu.Lock()
+				oldClient.running = false
+				oldClient.conn = nil
+				oldClient.mu.Unlock()
+			}
+
+			if err := m.JoinChannel(ch); err != nil {
+				log.Printf("[%s] Failed to reconnect after token refresh: %v", ch, err)
+			}
+		}(channel)
 	}
+	wg.Wait()
 }
 
 // monitorLiveChannels periodically checks which channels are live and joins/leaves accordingly

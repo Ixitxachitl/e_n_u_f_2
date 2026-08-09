@@ -2,6 +2,7 @@ package twitch
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -30,6 +31,7 @@ type Client struct {
 	writer           *bufio.Writer
 	running          bool
 	mu               sync.Mutex
+	ctx              context.Context // cancelled by Manager.Stop() to unblock pending dials
 	timeoutUntil     time.Time
 	onMessage        func(channel, username, message, color, emotes, badges string)
 	onConnect        func(channel string)
@@ -55,11 +57,12 @@ type Message struct {
 }
 
 // NewClient creates a new Twitch client for a channel
-func NewClient(channel string, cfg *config.Config, brain *markov.Brain) *Client {
+func NewClient(channel string, cfg *config.Config, brain *markov.Brain, ctx context.Context) *Client {
 	return &Client{
 		channel: strings.ToLower(channel),
 		cfg:     cfg,
 		brain:   brain,
+		ctx:     ctx,
 	}
 }
 
@@ -130,14 +133,31 @@ func (c *Client) ConnectWithRetry(maxRetries int, baseDelay time.Duration) error
 			}
 			log.Printf("[%s] Connection attempt %d failed, retrying in %v...", c.channel, attempt, delay)
 			c.mu.Unlock()
-			time.Sleep(delay)
+			select {
+			case <-time.After(delay):
+			case <-c.ctx.Done():
+				c.mu.Lock()
+				return fmt.Errorf("connection cancelled during backoff")
+			}
 			c.mu.Lock()
 		}
 
-		// Use TLS for secure connection to port 6697
-		dialer := &net.Dialer{Timeout: 15 * time.Second}
-		c.conn, err = tls.DialWithDialer(dialer, "tcp", twitchIRCServer, nil)
+		// Bail out immediately if the manager has been stopped
+		select {
+		case <-c.ctx.Done():
+			return fmt.Errorf("connection cancelled")
+		default:
+		}
+
+		// Use TLS for secure connection to port 6697; DialContext is cancelled
+		// immediately if the manager context is cancelled during shutdown.
+		c.mu.Unlock()
+		tlsDialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 15 * time.Second}}
+		var dialConn net.Conn
+		dialConn, err = tlsDialer.DialContext(c.ctx, "tcp", twitchIRCServer)
+		c.mu.Lock()
 		if err == nil {
+			c.conn = dialConn
 			break
 		}
 		lastErr = err
