@@ -159,7 +159,16 @@ async function checkAuthStatus() {
         const authLoading = document.getElementById('auth-loading');
         
         authLoading.style.display = 'none';
-        
+
+        const adminLogoutBtn = document.getElementById('admin-logout-btn');
+        if (adminLogoutBtn) {
+            if (status.is_localhost) {
+                adminLogoutBtn.title = 'Localhost connections are always trusted, so logging out here won\'t show a login screen. Access via a non-localhost URL to test session logout.';
+            } else {
+                adminLogoutBtn.title = 'Log out of the admin panel';
+            }
+        }
+
         if (status.needs_setup) {
             // First time setup - show password creation
             setupForm.style.display = 'block';
@@ -416,6 +425,12 @@ function setupEventListeners() {
     }
     document.getElementById('logout-btn').addEventListener('click', logout);
 
+    // Admin panel session logout (separate from the Twitch bot account logout above)
+    const adminLogoutBtn = document.getElementById('admin-logout-btn');
+    if (adminLogoutBtn) {
+        adminLogoutBtn.addEventListener('click', adminLogout);
+    }
+
     // Manual token refresh
     if (elements.refreshTokenBtn) {
         elements.refreshTokenBtn.addEventListener('click', async () => {
@@ -665,7 +680,33 @@ function handleWebSocketEvent(data) {
         if (quotesState.page === 1) {
             loadAdminQuotes();
         }
+    } else if (data.event === 'clean_progress') {
+        updateCleanProgress(data.data);
     }
+}
+
+// Updates the "Clean & Optimize All" progress bar from clean_progress
+// WebSocket events broadcast while the server works through each brain.
+function updateCleanProgress(d) {
+    const container = document.getElementById('clean-progress-container');
+    const bar = document.getElementById('clean-progress-bar');
+    const label = document.getElementById('clean-progress-label');
+    if (!container || !bar || !label) return;
+
+    container.style.display = 'block';
+    const phaseLabel = d.phase === 'optimize' ? 'Optimizing' : 'Cleaning';
+
+    if (d.complete) {
+        bar.style.width = '100%';
+        label.textContent = `${phaseLabel} complete`;
+        return;
+    }
+
+    const pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
+    bar.style.width = pct + '%';
+    label.textContent = d.total > 0
+        ? `${phaseLabel} ${d.current}/${d.total} channels — ${d.channel}`
+        : `${phaseLabel}...`;
 }
 
 // Data Loading
@@ -952,6 +993,22 @@ async function logout() {
     elements.loggedOutView.style.display = 'block';
     elements.loggedInView.style.display = 'none';
     loadStatus();
+}
+
+// Logs out of the admin panel itself (clears the session cookie), separate
+// from logout() above which disconnects the bot's Twitch account.
+async function adminLogout() {
+    if (!confirm('Log out of the admin panel?')) return;
+
+    try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+        console.error('Admin logout request failed:', err);
+    }
+
+    // Full reload so all app state (WebSocket, intervals, cached data) resets
+    // cleanly and checkAuthStatus() re-runs to show the login screen.
+    window.location.reload();
 }
 
 // --- Device Code Flow -------------------------------------------------------
@@ -1669,34 +1726,50 @@ async function removeIgnoredUser(username) {
 
 async function cleanAndOptimizeAll() {
     if (!confirm('Clean and optimize ALL brain data?\n\nThis will:\n- Remove entries containing blacklisted words\n- Remove non-ASCII characters\n- Optimize database files')) return;
-    
-    // First clean blacklisted words
-    const cleanResult = await api.delete('/api/database');
-    
-    // Then optimize
-    const optimizeResult = await api.post('/api/database', {});
-    
-    let msg = `Cleaned ${cleanResult.total_removed} blacklisted entries.`;
-    
-    if (optimizeResult.non_ascii_removed > 0) {
-        msg += `\nRemoved ${optimizeResult.non_ascii_removed} non-ASCII transitions.`;
-    }
-    
-    if (cleanResult.channels && cleanResult.channels.length > 0) {
-        msg += '\n\nBlacklist cleanup details:';
-        for (const ch of cleanResult.channels) {
-            msg += `\n\n[${ch.channel}] - ${ch.total_removed} removed:`;
-            for (const w of ch.words) {
-                msg += `\n  "${w.word}" - ${w.removed} transitions`;
+
+    const btn = document.getElementById('clean-optimize-btn');
+    const container = document.getElementById('clean-progress-container');
+    const bar = document.getElementById('clean-progress-bar');
+    const label = document.getElementById('clean-progress-label');
+
+    btn.disabled = true;
+    container.style.display = 'block';
+    bar.style.width = '0%';
+    label.textContent = 'Starting cleanup...';
+
+    try {
+        // First clean blacklisted words (progress arrives via the "clean_progress" WebSocket event)
+        const cleanResult = await api.delete('/api/database');
+
+        // Then optimize
+        bar.style.width = '0%';
+        const optimizeResult = await api.post('/api/database', {});
+
+        let msg = `Cleaned ${cleanResult.total_removed} blacklisted entries.`;
+
+        if (optimizeResult.non_ascii_removed > 0) {
+            msg += `\nRemoved ${optimizeResult.non_ascii_removed} non-ASCII transitions.`;
+        }
+
+        if (cleanResult.channels && cleanResult.channels.length > 0) {
+            msg += '\n\nBlacklist cleanup details:';
+            for (const ch of cleanResult.channels) {
+                msg += `\n\n[${ch.channel}] - ${ch.total_removed} removed:`;
+                for (const w of ch.words) {
+                    msg += `\n  "${w.word}" - ${w.removed} transitions`;
+                }
             }
         }
+
+        msg += '\n\nDatabase optimized!';
+
+        alert(msg);
+        loadBrains();
+        loadDatabaseStats();
+    } finally {
+        btn.disabled = false;
+        container.style.display = 'none';
     }
-    
-    msg += '\n\nDatabase optimized!';
-    
-    alert(msg);
-    loadBrains();
-    loadDatabaseStats();
 }
 
 // Brain Editor

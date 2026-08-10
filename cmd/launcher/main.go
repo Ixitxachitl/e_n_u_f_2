@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/getlantern/systray"
@@ -139,7 +140,11 @@ func cleanup() {
 }
 
 func showError(msg string) {
-	exec.Command("powershell", "-Command", fmt.Sprintf(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('%s', 'e_n_u_f 2.0 Error', 'OK', 'Error')`, msg)).Run()
+	// Escape single quotes for PowerShell's single-quoted string literal
+	// syntax ('' is a literal quote) so a stray "'" in msg (e.g. from a file
+	// path or OS error string) can't break out of the string.
+	psEscaped := strings.ReplaceAll(msg, "'", "''")
+	exec.Command("powershell", "-Command", fmt.Sprintf(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('%s', 'e_n_u_f 2.0 Error', 'OK', 'Error')`, psEscaped)).Run()
 	f, _ := os.OpenFile(filepath.Join(exeDir, "launcher_error.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if f != nil {
 		f.WriteString(fmt.Sprintf("%s: %s\n", time.Now().Format(time.RFC3339), msg))

@@ -81,6 +81,7 @@
                     </div>
                 </div>
                 <span id="status-indicator" class="status-badge">Connecting...</span>
+                <button id="admin-logout-btn" class="btn small danger" title="Log out of the admin panel">Log Out</button>
             </div>
         </header>
 
@@ -306,6 +307,12 @@
                 </div>
                 <div class="actions">
                     <button id="clean-optimize-btn" class="btn warning">Clean &amp; Optimize All</button>
+                </div>
+                <div id="clean-progress-container" class="progress-container" style="display: none;">
+                    <div id="clean-progress-label" class="progress-label">Starting...</div>
+                    <div class="progress-bar-track">
+                        <div id="clean-progress-bar" class="progress-bar-fill"></div>
+                    </div>
                 </div>
             </div>
 

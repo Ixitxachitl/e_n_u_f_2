@@ -15,8 +15,13 @@ var (
 	once sync.Once
 )
 
-// GetDataDir returns the data directory path
+// GetDataDir returns the data directory path. Honors TWITCHBOT_DATA_DIR so
+// tests (and advanced users) can point the bot at an isolated directory
+// instead of the real ~/.twitchbot.
 func GetDataDir() string {
+	if dir := os.Getenv("TWITCHBOT_DATA_DIR"); dir != "" {
+		return dir
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "data"

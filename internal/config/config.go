@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"twitchbot/internal/database"
 )
@@ -681,18 +684,13 @@ func (c *Config) GetRecentActivity() []ActivityEntry {
 
 // Authentication functions
 
-// hashPassword creates a SHA-256 hash of the password with a salt
-func hashPassword(password, salt string) string {
+// legacyHashPassword recreates the old (pre-bcrypt) salted SHA-256 hash so
+// existing installs can still log in with a password set before the bcrypt
+// migration. Only used as a fallback in VerifyAdminPassword.
+func legacyHashPassword(password, salt string) string {
 	h := sha256.New()
 	h.Write([]byte(salt + password))
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-// generateSalt generates a random salt
-func generateSalt() string {
-	bytes := make([]byte, 16)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)
 }
 
 // generateToken generates a random session token
@@ -708,25 +706,45 @@ func (c *Config) HasAdminPassword() bool {
 	return hash != ""
 }
 
-// SetAdminPassword sets the admin password (first-time setup or change)
+// SetAdminPassword sets the admin password (first-time setup or change) using bcrypt.
 func (c *Config) SetAdminPassword(password string) error {
-	salt := generateSalt()
-	hash := hashPassword(password, salt)
-	if err := c.setValue("admin_password_salt", salt); err != nil {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
 		return err
 	}
-	return c.setValue("admin_password_hash", hash)
+	// Clear any legacy salt so VerifyAdminPassword doesn't fall back to it.
+	c.setValue("admin_password_salt", "")
+	return c.setValue("admin_password_hash", string(hash))
 }
 
-// VerifyAdminPassword checks if the provided password is correct
+// VerifyAdminPassword checks if the provided password is correct. Handles
+// both bcrypt hashes (current format) and the legacy salted SHA-256 hashes
+// from installs that set their password before the bcrypt migration —
+// a successful legacy match is transparently upgraded to bcrypt.
 func (c *Config) VerifyAdminPassword(password string) bool {
-	salt := c.getValue("admin_password_salt")
 	storedHash := c.getValue("admin_password_hash")
-	if salt == "" || storedHash == "" {
+	if storedHash == "" {
 		return false
 	}
-	providedHash := hashPassword(password, salt)
-	return subtle.ConstantTimeCompare([]byte(storedHash), []byte(providedHash)) == 1
+
+	if err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)); err == nil {
+		return true
+	}
+
+	salt := c.getValue("admin_password_salt")
+	if salt == "" {
+		return false
+	}
+	legacyHash := legacyHashPassword(password, salt)
+	if subtle.ConstantTimeCompare([]byte(storedHash), []byte(legacyHash)) != 1 {
+		return false
+	}
+
+	// Correct password under the legacy scheme — upgrade to bcrypt.
+	if err := c.SetAdminPassword(password); err != nil {
+		log.Printf("Warning: failed to upgrade admin password hash to bcrypt: %v", err)
+	}
+	return true
 }
 
 // CreateSession creates a new session and returns the token

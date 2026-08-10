@@ -3,6 +3,7 @@ package markov
 import (
 	"database/sql"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -270,11 +271,14 @@ func (m *Manager) CleanBrain(channel string) CleanResult {
 	return result
 }
 
-// CleanAllBrains cleans all brains of blacklisted words
-func (m *Manager) CleanAllBrains() []CleanResult {
+// CleanAllBrains cleans all brains of blacklisted words. If progress is
+// non-nil, it's called after each brain finishes with (channels processed
+// so far, total channels, channel just processed) so callers can report
+// incremental progress on what can be a slow, multi-brain operation.
+func (m *Manager) CleanAllBrains(progress func(current, total int, channel string)) []CleanResult {
 	stats := m.ListBrains()
 	results := []CleanResult{}
-	for _, stat := range stats {
+	for i, stat := range stats {
 		brain := m.GetBrain(stat.Channel)
 		if brain != nil {
 			result := brain.Clean()
@@ -282,30 +286,41 @@ func (m *Manager) CleanAllBrains() []CleanResult {
 				results = append(results, result)
 			}
 		}
+		if progress != nil {
+			progress(i+1, len(stats), stat.Channel)
+		}
 	}
 	m.invalidateListCache()
 	return results
 }
 
-// OptimizeAll runs VACUUM on all brain databases
-func (m *Manager) OptimizeAll() {
+// OptimizeAll runs VACUUM on all brain databases. See CleanAllBrains for
+// the progress callback semantics.
+func (m *Manager) OptimizeAll(progress func(current, total int, channel string)) {
 	stats := m.ListBrains()
-	for _, stat := range stats {
+	for i, stat := range stats {
 		brain := m.GetBrain(stat.Channel)
 		if brain != nil {
 			brain.Optimize()
 		}
+		if progress != nil {
+			progress(i+1, len(stats), stat.Channel)
+		}
 	}
 }
 
-// CleanNonASCIIAll removes non-ASCII transitions from all brains
-func (m *Manager) CleanNonASCIIAll() int {
+// CleanNonASCIIAll removes non-ASCII transitions from all brains. See
+// CleanAllBrains for the progress callback semantics.
+func (m *Manager) CleanNonASCIIAll(progress func(current, total int, channel string)) int {
 	stats := m.ListBrains()
 	totalRemoved := 0
-	for _, stat := range stats {
+	for i, stat := range stats {
 		brain := m.GetBrain(stat.Channel)
 		if brain != nil {
 			totalRemoved += brain.CleanNonASCII()
+		}
+		if progress != nil {
+			progress(i+1, len(stats), stat.Channel)
 		}
 	}
 	return totalRemoved
@@ -335,15 +350,26 @@ func (m *Manager) GenerateGlobal(maxWords int) string {
 		return ""
 	}
 
-	// Pick a random brain to start from
-	startBrain := brains[brains[0].rng.Intn(len(brains))]
+	// Pick a random brain to start from. Uses the top-level math/rand
+	// functions (lock-protected global source) rather than a brain's own
+	// rng, since multiple channels can call GenerateGlobal concurrently.
+	startBrain := brains[rand.Intn(len(brains))]
 
-	// Get a random starting pair from the starting brain
+	// Get a random starting pair from the starting brain. Hold the brain's
+	// own RLock while touching its db so a concurrent Brain.Delete() (which
+	// closes and nils b.db under Lock) can't race with this read.
 	var word1, word2 string
-	err := startBrain.db.QueryRow(`
-		SELECT word1, word2 FROM transitions 
-		ORDER BY RANDOM() LIMIT 1
-	`).Scan(&word1, &word2)
+	startBrain.mu.RLock()
+	var err error
+	if startBrain.db == nil {
+		err = sql.ErrNoRows
+	} else {
+		err = startBrain.db.QueryRow(`
+			SELECT word1, word2 FROM transitions
+			ORDER BY RANDOM() LIMIT 1
+		`).Scan(&word1, &word2)
+	}
+	startBrain.mu.RUnlock()
 
 	if err != nil {
 		return ""
@@ -358,12 +384,18 @@ func (m *Manager) GenerateGlobal(maxWords int) string {
 		totalWeight := 0
 
 		for _, brain := range brains {
+			brain.mu.RLock()
+			if brain.db == nil {
+				brain.mu.RUnlock()
+				continue
+			}
 			rows, err := brain.db.Query(`
 				SELECT next_word, count FROM transitions
 				WHERE word1 = ? AND word2 = ?
 			`, word1, word2)
 
 			if err != nil {
+				brain.mu.RUnlock()
 				continue
 			}
 
@@ -377,6 +409,7 @@ func (m *Manager) GenerateGlobal(maxWords int) string {
 				}
 			}
 			rows.Close()
+			brain.mu.RUnlock()
 		}
 
 		if len(allCandidates) == 0 {
@@ -384,7 +417,7 @@ func (m *Manager) GenerateGlobal(maxWords int) string {
 		}
 
 		// Weighted random selection
-		r := startBrain.rng.Intn(totalWeight)
+		r := rand.Intn(totalWeight)
 		cumulative := 0
 		var nextWord string
 		for i, w := range allWeights {

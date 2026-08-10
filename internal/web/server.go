@@ -989,9 +989,17 @@ func (s *Server) handleBrainAction(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		if action == "stats" {
 			brain := s.manager.GetBrainManager().GetBrain(channel)
+			if brain == nil {
+				httpError(w, "Failed to load brain for channel", http.StatusInternalServerError)
+				return
+			}
 			jsonResponse(w, brain.GetStats())
 		} else if action == "transitions" {
 			brain := s.manager.GetBrainManager().GetBrain(channel)
+			if brain == nil {
+				httpError(w, "Failed to load brain for channel", http.StatusInternalServerError)
+				return
+			}
 			search := r.URL.Query().Get("search")
 			page := 1
 			pageSize := 50
@@ -1033,6 +1041,10 @@ func (s *Server) handleBrainAction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			brain := s.manager.GetBrainManager().GetBrain(channel)
+			if brain == nil {
+				httpError(w, "Failed to load brain for channel", http.StatusInternalServerError)
+				return
+			}
 			if err := brain.UpdateTransitionCount(req.Word1, req.Word2, req.NextWord, req.Count); err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -1054,6 +1066,10 @@ func (s *Server) handleBrainAction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			brain := s.manager.GetBrainManager().GetBrain(channel)
+			if brain == nil {
+				httpError(w, "Failed to load brain for channel", http.StatusInternalServerError)
+				return
+			}
 			if err := brain.DeleteTransition(req.Word1, req.Word2, req.NextWord); err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -1173,8 +1189,10 @@ func (s *Server) handleDatabase(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, stats)
 
 	case http.MethodPost:
+		progress := s.dbCleanProgressReporter("optimize")
+
 		// Clean non-ASCII transitions from all brains
-		nonASCIIRemoved := s.manager.GetBrainManager().CleanNonASCIIAll()
+		nonASCIIRemoved := s.manager.GetBrainManager().CleanNonASCIIAll(progress)
 
 		// Vacuum/optimize database
 		db := database.GetDB()
@@ -1184,7 +1202,11 @@ func (s *Server) handleDatabase(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Optimize all brain databases too
-		s.manager.GetBrainManager().OptimizeAll()
+		s.manager.GetBrainManager().OptimizeAll(progress)
+
+		s.broadcastEvent("clean_progress", map[string]interface{}{
+			"phase": "optimize", "complete": true,
+		})
 
 		jsonResponse(w, map[string]interface{}{
 			"status":            "optimized",
@@ -1193,11 +1215,16 @@ func (s *Server) handleDatabase(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		// Clean all brains
-		results := s.manager.GetBrainManager().CleanAllBrains()
+		results := s.manager.GetBrainManager().CleanAllBrains(s.dbCleanProgressReporter("clean"))
 		totalRemoved := 0
 		for _, r := range results {
 			totalRemoved += r.TotalRemoved
 		}
+
+		s.broadcastEvent("clean_progress", map[string]interface{}{
+			"phase": "clean", "complete": true,
+		})
+
 		jsonResponse(w, map[string]interface{}{
 			"total_removed": totalRemoved,
 			"channels":      results,
@@ -1205,6 +1232,21 @@ func (s *Server) handleDatabase(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		httpError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// dbCleanProgressReporter returns a progress callback that broadcasts a
+// "clean_progress" WebSocket event after each brain is processed, so the
+// web UI can render a live progress bar for a potentially slow all-brains
+// clean/optimize pass instead of appearing to hang until it completes.
+func (s *Server) dbCleanProgressReporter(phase string) func(current, total int, channel string) {
+	return func(current, total int, channel string) {
+		s.broadcastEvent("clean_progress", map[string]interface{}{
+			"phase":   phase,
+			"current": current,
+			"total":   total,
+			"channel": channel,
+		})
 	}
 }
 

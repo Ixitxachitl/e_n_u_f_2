@@ -23,7 +23,6 @@ type Brain struct {
 	db           *sql.DB
 	mu           sync.RWMutex
 	msgCounter   int
-	rng          *rand.Rand
 	statsCache   *BrainStats
 	statsCacheAt time.Time
 }
@@ -57,7 +56,6 @@ func NewBrain(channel string, cfg *config.Config) (*Brain, error) {
 	brain := &Brain{
 		Channel: channel,
 		cfg:     cfg,
-		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	if err := brain.initDB(); err != nil {
@@ -381,8 +379,11 @@ func (b *Brain) Generate(maxWords int) string {
 			break
 		}
 
-		// Weighted random selection
-		r := b.rng.Intn(totalWeight)
+		// Weighted random selection. Uses the top-level math/rand functions
+		// (backed by a lock-protected global source) rather than a per-Brain
+		// *rand.Rand, since RLock allows concurrent readers to call Generate
+		// simultaneously and a plain rand.Rand is not safe for concurrent use.
+		r := rand.Intn(totalWeight)
 		cumulative := 0
 		var nextWord string
 		for i, w := range weights {
@@ -692,19 +693,18 @@ func (b *Brain) Erase() error {
 	defer b.mu.Unlock()
 
 	// Delete all data from tables
-	_, err := b.db.Exec("DELETE FROM markov_chain")
+	_, err := b.db.Exec("DELETE FROM transitions")
 	if err != nil {
 		return err
 	}
-	_, err = b.db.Exec("DELETE FROM stats")
+	_, err = b.db.Exec("DELETE FROM state")
 	if err != nil {
 		return err
 	}
-	// Reset stats
-	_, err = b.db.Exec("INSERT OR REPLACE INTO stats (key, value) VALUES ('message_count', '0')")
-	if err != nil {
-		return err
-	}
+	// Reset in-memory counter and stats cache to match the cleared state table
+	b.msgCounter = 0
+	b.statsCache = nil
+
 	// Vacuum to reclaim space
 	_, err = b.db.Exec("VACUUM")
 	return err
